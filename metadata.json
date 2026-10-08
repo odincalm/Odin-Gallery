@@ -1,0 +1,6 @@
+{
+  "name": "ODIN Gallery",
+  "description": "Local-first offline gallery application with liquid glass design, fast MediaStore indexing, full-screen viewer, Media3 video player, and safe Recently Deleted management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -3,14 +3,12 @@ package com.example.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,10 +46,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -59,7 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.example.ui.components.DonateDialog
+import com.example.ui.theme.OdinAnimations
 import com.example.ui.theme.OdinColors
 import com.example.ui.theme.OdinTypography
 import com.example.ui.viewmodel.GalleryViewModel
@@ -68,7 +67,8 @@ import com.example.ui.viewmodel.GalleryViewModel
 fun SettingsScreen(
     viewModel: GalleryViewModel,
     onBack: () -> Unit,
-    onOpenHiddenVault: () -> Unit
+    onOpenHiddenVault: () -> Unit,
+    onOpenDonate: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val activeMedia by viewModel.activeMedia.collectAsStateWithLifecycle()
@@ -78,7 +78,6 @@ fun SettingsScreen(
     val photosCount = activeMedia.count { !it.isVideo }
     val videosCount = activeMedia.count { it.isVideo }
 
-    var showDonateDialog by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
     BackHandler {
@@ -285,34 +284,51 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Golden Donate Button with subtle premium animation
-                val infiniteTransition = rememberInfiniteTransition(label = "donate_anim")
-                val scale by infiniteTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 1.03f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(1200),
-                        repeatMode = RepeatMode.Reverse
-                    ),
+                // Golden Donate Button with responsive press feedback
+                val donateInteractionSource = remember { MutableInteractionSource() }
+                val isDonatePressed by donateInteractionSource.collectIsPressedAsState()
+                val donateScale by animateFloatAsState(
+                    targetValue = if (isDonatePressed) 0.96f else 1f,
+                    animationSpec = OdinAnimations.springFast,
                     label = "donate_scale"
                 )
 
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .scale(scale)
+                        .graphicsLayer {
+                            scaleX = donateScale
+                            scaleY = donateScale
+                        }
                         .clip(RoundedCornerShape(14.dp))
                         .background(Color(0xFFFFD700)) // Golden color
-                        .clickable { showDonateDialog = true }
-                        .padding(vertical = 12.dp),
+                        .clickable(
+                            interactionSource = donateInteractionSource,
+                            indication = null,
+                            onClick = onOpenDonate
+                        )
+                        .testTag("donate_button")
+                        .padding(vertical = 14.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "Donate",
-                        style = OdinTypography.headline,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Favorite,
+                            contentDescription = null,
+                            tint = Color.Black,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Donate",
+                            style = OdinTypography.headline,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.Black
+                        )
+                    }
                 }
             }
 
@@ -324,10 +340,6 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
-        }
-
-        if (showDonateDialog) {
-            DonateDialog(onDismiss = { showDonateDialog = false })
         }
     }
 }

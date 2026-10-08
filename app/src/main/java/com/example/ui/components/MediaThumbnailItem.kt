@@ -28,8 +28,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -39,6 +39,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import coil.request.videoFrameMillis
+import coil.size.Precision
 import coil.size.Scale
 import com.example.model.MediaItem
 import com.example.ui.theme.OdinAnimations
@@ -57,16 +59,13 @@ fun MediaThumbnailItem(
 ) {
     val context = LocalContext.current
 
-    val itemScale = if (isSelectionMode) {
-        val scale by animateFloatAsState(
+    val scaleState = if (isSelectionMode) {
+        animateFloatAsState(
             targetValue = if (isSelected) 0.93f else 1f,
             animationSpec = OdinAnimations.springFast,
             label = "thumbnail_scale"
         )
-        scale
-    } else {
-        1f
-    }
+    } else null
 
     // In normal mode: sharp edge-to-edge square.
     // In selection mode: slight rounding for selected items.
@@ -74,20 +73,39 @@ fun MediaThumbnailItem(
         if (isSelected) OdinShapes.selectionThumbnail else OdinShapes.thumbnail
     }
 
-    // Memoize ImageRequest to avoid re-allocating on every recomposition
-    val imageRequest = remember(item.uri) {
+    // High performance thumbnail request:
+    // - Specific memory & disk cache keys per item ID + dateModified
+    // - Inexact thumbnail dimensions matching the display cell
+    // - GPU hardware bitmaps (allowHardware)
+    // - Fast video keyframe extraction for video items
+    // - No crossfade animation during scroll for max FPS
+    val imageRequest = remember(item.id, item.dateModified) {
         ImageRequest.Builder(context)
             .data(item.uri)
-            .crossfade(false)
-            .size(220)
+            .memoryCacheKey("thumb_${item.id}_${item.dateModified}")
+            .diskCacheKey("thumb_${item.id}_${item.dateModified}")
+            .size(280)
             .scale(Scale.FILL)
+            .precision(Precision.INEXACT)
+            .allowHardware(true)
+            .allowRgb565(true)
+            .crossfade(false)
+            .apply {
+                if (item.isVideo) {
+                    videoFrameMillis(500)
+                }
+            }
             .build()
     }
 
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .scale(itemScale)
+            .graphicsLayer {
+                val s = scaleState?.value ?: 1f
+                scaleX = s
+                scaleY = s
+            }
             .clip(tileShape)
             .background(Color(0xFF1C1C1E))
             .combinedClickable(

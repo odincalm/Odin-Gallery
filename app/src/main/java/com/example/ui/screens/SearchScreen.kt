@@ -66,12 +66,14 @@ fun SearchScreen(
     val searchFilterType by viewModel.searchFilterType.collectAsStateWithLifecycle()
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
 
-    val quickFilters = listOf(
-        "ALL" to "All",
-        "PHOTOS" to "Photos",
-        "VIDEOS" to "Videos",
-        "FAVORITES" to "Favorites"
-    )
+    val quickFilters = remember {
+        listOf(
+            "ALL" to "All",
+            "PHOTOS" to "Photos",
+            "VIDEOS" to "Videos",
+            "FAVORITES" to "Favorites"
+        )
+    }
 
     Box(
         modifier = Modifier

@@ -118,7 +118,11 @@ fun AlbumDetailScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 // Header with Album Title & Count
-                item(span = { GridItemSpan(3) }) {
+                item(
+                    key = "album_header",
+                    span = { GridItemSpan(3) },
+                    contentType = "header"
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -187,7 +191,11 @@ fun AlbumDetailScreen(
                     }
                 }
 
-                items(mediaItems, key = { it.id }) { item ->
+                items(
+                    items = mediaItems,
+                    key = { it.id },
+                    contentType = { if (it.isVideo) "video" else "photo" }
+                ) { item ->
                     val isSelected = selectedMediaIds.contains(item.id)
                     MediaThumbnailItem(
                         item = item,

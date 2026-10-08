@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Photo</string>
+    <string name="app_name">ODIN Gallery</string>
     <string name="app_tagline">Your photos. Your device. Your privacy.</string>
     <string name="tab_photos">Photos</string>
     <string name="tab_albums">Albums</string>

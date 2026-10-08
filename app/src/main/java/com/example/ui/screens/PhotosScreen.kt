@@ -124,7 +124,11 @@ fun PhotosScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 // Header item: Large Title "Photos"
-                item(span = { GridItemSpan(3) }) {
+                item(
+                    key = "header_photos_title",
+                    span = { GridItemSpan(3) },
+                    contentType = "title"
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -158,7 +162,11 @@ fun PhotosScreen(
 
                 // Natural Date Grouping
                 mediaGroups.forEach { group ->
-                    item(span = { GridItemSpan(3) }) {
+                    item(
+                        key = "header_${group.title}",
+                        span = { GridItemSpan(3) },
+                        contentType = "date_header"
+                    ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -179,7 +187,11 @@ fun PhotosScreen(
                         }
                     }
 
-                    items(group.items, key = { it.id }) { item ->
+                    items(
+                        items = group.items,
+                        key = { it.id },
+                        contentType = { if (it.isVideo) "video" else "photo" }
+                    ) { item ->
                         val isSelected = selectedMediaIds.contains(item.id)
                         MediaThumbnailItem(
                             item = item,
@@ -280,7 +292,9 @@ fun PhotosScreen(
                 .padding(bottom = 16.dp, start = 20.dp, end = 20.dp)
         ) {
             val selectedCount = selectedMediaIds.size
-            val selectedItems = activeMedia.filter { it.id in selectedMediaIds }
+            val selectedItems = remember(activeMedia, selectedMediaIds) {
+                activeMedia.filter { it.id in selectedMediaIds }
+            }
 
             GlassSurface(
                 modifier = Modifier.fillMaxWidth(),

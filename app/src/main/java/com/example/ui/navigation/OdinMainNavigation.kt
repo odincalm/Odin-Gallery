@@ -51,6 +51,7 @@ import com.example.model.AlbumItem
 import com.example.ui.components.GlassSurface
 import com.example.ui.screens.AlbumDetailScreen
 import com.example.ui.screens.AlbumsScreen
+import com.example.ui.screens.DonateScreen
 import com.example.ui.screens.HiddenScreen
 import com.example.ui.screens.MediaViewerScreen
 import com.example.ui.screens.PhotosScreen
@@ -74,6 +75,7 @@ sealed class ScreenDestination {
     data object RecentlyDeleted : ScreenDestination()
     data object Settings : ScreenDestination()
     data object Hidden : ScreenDestination()
+    data object Donate : ScreenDestination()
 }
 
 @Composable
@@ -89,7 +91,11 @@ fun OdinMainNavigation(
     val isSelectionMode by viewModel.isSelectionMode.collectAsStateWithLifecycle()
 
     BackHandler(enabled = currentDestination !is ScreenDestination.Main && !isViewerOpen) {
-        currentDestination = ScreenDestination.Main
+        currentDestination = when (currentDestination) {
+            is ScreenDestination.Donate -> ScreenDestination.Settings
+            is ScreenDestination.Hidden -> ScreenDestination.Settings
+            else -> ScreenDestination.Main
+        }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -140,7 +146,8 @@ fun OdinMainNavigation(
                 SettingsScreen(
                     viewModel = viewModel,
                     onBack = { currentDestination = ScreenDestination.Main },
-                    onOpenHiddenVault = { currentDestination = ScreenDestination.Hidden }
+                    onOpenHiddenVault = { currentDestination = ScreenDestination.Hidden },
+                    onOpenDonate = { currentDestination = ScreenDestination.Donate }
                 )
             }
             is ScreenDestination.Hidden -> {
@@ -150,6 +157,11 @@ fun OdinMainNavigation(
                     onOpenMedia = { item, list ->
                         viewModel.openViewer(item, list)
                     }
+                )
+            }
+            is ScreenDestination.Donate -> {
+                DonateScreen(
+                    onBack = { currentDestination = ScreenDestination.Settings }
                 )
             }
         }

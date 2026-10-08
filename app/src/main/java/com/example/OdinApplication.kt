@@ -6,27 +6,32 @@ import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.util.DebugLogger
 
 class OdinApplication : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)
             .components {
-                // Support extracting video frame thumbnails for offline videos and recently deleted video files
+                // Video frame decoder for local video thumbnails
                 add(VideoFrameDecoder.Factory())
             }
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    .maxSizePercent(0.35) // Dedicate 35% of heap to fast image memory cache
+                    .strongReferencesEnabled(true)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("odin_image_cache"))
-                    .maxSizeBytes(100L * 1024 * 1024) // 100 MB disk cache
+                    .maxSizeBytes(250L * 1024 * 1024) // 250 MB disk cache
                     .build()
             }
-            .crossfade(true)
+            .allowHardware(true) // Direct GPU memory rendering on Android 8.0+
+            .allowRgb565(true)   // Optimize thumbnail memory allocation
+            .respectCacheHeaders(false) // Local-first offline performance
+            .crossfade(false)    // Disable global crossfade to avoid per-frame opacity animation overhead during scroll
             .build()
     }
 }

@@ -474,11 +474,15 @@ private fun ImageViewerPage(
             },
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
+            val fullImageRequest = remember(item.uri) {
+                ImageRequest.Builder(context)
                     .data(item.uri)
+                    .allowHardware(true)
                     .crossfade(true)
-                    .build(),
+                    .build()
+            }
+            AsyncImage(
+                model = fullImageRequest,
                 contentDescription = item.displayName,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()

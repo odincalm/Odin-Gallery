@@ -20,11 +20,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
@@ -44,20 +44,23 @@ fun GlassSurface(
     val isDark = isSystemInDarkTheme()
 
     // Liquid glass background: dark rgba(41,41,41, 0.90), light rgba(255,255,255, 0.80)
-    val baseColor = if (isDark) {
-        Color(0xFF292929).copy(alpha = tonalAlpha)
-    } else {
-        Color(0xFFFFFFFF).copy(alpha = (tonalAlpha * 0.9f).coerceIn(0.65f, 0.85f))
+    val baseColor = remember(isDark, tonalAlpha) {
+        if (isDark) {
+            Color(0xFF292929).copy(alpha = tonalAlpha)
+        } else {
+            Color(0xFFFFFFFF).copy(alpha = (tonalAlpha * 0.9f).coerceIn(0.65f, 0.85f))
+        }
     }
 
-    // Subtle edge highlight (internal specular gradient)
-    val highlightTop = if (isDark) Color(0x28FFFFFF) else Color(0x60FFFFFF)
-    val highlightBottom = if (isDark) Color(0x0AFFFFFF) else Color(0x0D000000)
-
-    val edgeBorder = BorderStroke(
-        width = 0.5.dp,
-        brush = Brush.verticalGradient(listOf(highlightTop, highlightBottom))
-    )
+    // Subtle edge highlight (internal specular gradient) memoized to eliminate allocations per frame
+    val edgeBorder = remember(isDark) {
+        val highlightTop = if (isDark) Color(0x28FFFFFF) else Color(0x60FFFFFF)
+        val highlightBottom = if (isDark) Color(0x0AFFFFFF) else Color(0x0D000000)
+        BorderStroke(
+            width = 0.5.dp,
+            brush = Brush.verticalGradient(listOf(highlightTop, highlightBottom))
+        )
+    }
 
     val shadowMod = if (elevation > 0.dp) {
         Modifier.shadow(
@@ -116,13 +119,20 @@ fun GlassIconButton(
     )
 
     val isDark = isSystemInDarkTheme()
-    val defaultTint = if (isDark) OdinColors.DarkPrimaryText else OdinColors.LightPrimaryText
-    val effectiveTint = if (tint != Color.Unspecified) tint else defaultTint
+    val defaultTint = remember(isDark) {
+        if (isDark) OdinColors.DarkPrimaryText else OdinColors.LightPrimaryText
+    }
+    val effectiveTint = remember(tint, defaultTint) {
+        if (tint != Color.Unspecified) tint else defaultTint
+    }
 
     GlassSurface(
         modifier = modifier
             .size(size)
-            .scale(scale)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

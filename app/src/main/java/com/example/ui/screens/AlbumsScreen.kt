@@ -91,25 +91,29 @@ fun AlbumsScreen(
     var showFirstDeleteConfirm by remember { mutableStateOf(false) }
     var showSecondDeleteConfirm by remember { mutableStateOf(false) }
 
-    val customAlbums = albums.filter { it.systemType == null }
-    val allPhotosAlbum = albums.firstOrNull { it.systemType == SystemAlbumType.ALL_PHOTOS }
+    val customAlbums = remember(albums) { albums.filter { it.systemType == null } }
+    val allPhotosAlbum = remember(albums) { albums.firstOrNull { it.systemType == SystemAlbumType.ALL_PHOTOS } }
 
-    val mediaTypeAlbums = albums.filter {
-        it.systemType in listOf(
-            SystemAlbumType.VIDEOS,
-            SystemAlbumType.CAMERA,
-            SystemAlbumType.SCREENSHOTS,
-            SystemAlbumType.SCREEN_RECORDINGS,
-            SystemAlbumType.DOWNLOADS,
-            SystemAlbumType.FAVORITES
-        )
+    val mediaTypeAlbums = remember(albums) {
+        albums.filter {
+            it.systemType in listOf(
+                SystemAlbumType.VIDEOS,
+                SystemAlbumType.CAMERA,
+                SystemAlbumType.SCREENSHOTS,
+                SystemAlbumType.SCREEN_RECORDINGS,
+                SystemAlbumType.DOWNLOADS,
+                SystemAlbumType.FAVORITES
+            )
+        }
     }
 
-    val utilityAlbums = albums.filter {
-        it.systemType in listOf(
-            SystemAlbumType.RECENTLY_ADDED,
-            SystemAlbumType.RECENTLY_DELETED
-        )
+    val utilityAlbums = remember(albums) {
+        albums.filter {
+            it.systemType in listOf(
+                SystemAlbumType.RECENTLY_ADDED,
+                SystemAlbumType.RECENTLY_DELETED
+            )
+        }
     }
 
     Box(
@@ -519,12 +523,17 @@ private fun AlbumCoverTile(
                 .background(Color(0xFF1C1C1E))
         ) {
             if (album.coverUri != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
+                val coverRequest = remember(album.coverUri) {
+                    ImageRequest.Builder(context)
                         .data(album.coverUri)
-                        .crossfade(true)
                         .size(300)
-                        .build(),
+                        .allowHardware(true)
+                        .allowRgb565(true)
+                        .crossfade(false)
+                        .build()
+                }
+                AsyncImage(
+                    model = coverRequest,
                     contentDescription = album.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()

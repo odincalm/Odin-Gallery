@@ -14,11 +14,14 @@ import com.example.data.repository.MediaStoreScanner
 import com.example.model.AlbumItem
 import com.example.model.MediaGroup
 import com.example.model.MediaItem
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -47,13 +50,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         initialValue = emptyList()
     )
 
-    val mediaGroups: StateFlow<List<MediaGroup>> = combine(repository.activeMediaFlow) { items ->
-        MediaStoreScanner.groupMediaByDate(items[0])
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
-    )
+    val mediaGroups: StateFlow<List<MediaGroup>> = activeMedia
+        .map { items ->
+            MediaStoreScanner.groupMediaByDate(items)
+        }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     val albums: StateFlow<List<AlbumItem>> = repository.allAlbumsFlow.stateIn(
         scope = viewModelScope,
@@ -140,11 +146,13 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                     (item.bucketDisplayName?.lowercase()?.contains(trimmed) == true) ||
                     (item.relativePath?.lowercase()?.contains(trimmed) == true)
         }
-    }.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.WhileSubscribed(5000),
-        initialValue = emptyList()
-    )
+    }
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     // User appearance preference ("SYSTEM", "LIGHT", "DARK")
     private val _themeMode = MutableStateFlow("SYSTEM")

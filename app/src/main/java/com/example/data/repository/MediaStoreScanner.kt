@@ -15,6 +15,7 @@ import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 class MediaStoreScanner(private val context: Context) {
 
@@ -227,61 +228,68 @@ class MediaStoreScanner(private val context: Context) {
     }
 
     companion object {
-        private val fullDateFormatter by lazy { SimpleDateFormat("MMMM d, yyyy", Locale.getDefault()) }
-        private val monthYearFormatter by lazy { SimpleDateFormat("MMMM yyyy", Locale.getDefault()) }
-        private val dayDateFormatter by lazy { SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()) }
-
         fun groupMediaByDate(items: List<MediaItem>): List<MediaGroup> {
             if (items.isEmpty()) return emptyList()
 
+            val tzOffset = TimeZone.getDefault().getOffset(System.currentTimeMillis()).toLong()
+            val now = System.currentTimeMillis()
+            val todayDay = (now + tzOffset) / 86_400_000L
+            val yesterdayDay = todayDay - 1L
+
             val calendar = Calendar.getInstance()
-            val todayCalendar = Calendar.getInstance()
-            val yesterdayCalendar = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+            val currentYear = calendar.get(Calendar.YEAR)
 
-            val todayYear = todayCalendar.get(Calendar.YEAR)
-            val todayDay = todayCalendar.get(Calendar.DAY_OF_YEAR)
-            val yestYear = yesterdayCalendar.get(Calendar.YEAR)
-            val yestDay = yesterdayCalendar.get(Calendar.DAY_OF_YEAR)
+            val fullDateFormatter = SimpleDateFormat("MMMM d, yyyy", Locale.getDefault())
+            val monthYearFormatter = SimpleDateFormat("MMMM yyyy", Locale.getDefault())
+            val dayDateFormatter = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault())
 
-            // Group by year and day-of-year
-            val groupedMap = items.groupBy { item ->
-                val timeMillis = if (item.dateAdded > 10_000_000_000L) item.dateAdded else item.dateAdded * 1000L
-                calendar.timeInMillis = timeMillis
-                "${calendar.get(Calendar.YEAR)}_${calendar.get(Calendar.DAY_OF_YEAR)}"
-            }
+            val result = ArrayList<MediaGroup>()
+            var currentDay = Long.MIN_VALUE
+            var currentGroupItems = ArrayList<MediaItem>()
+            var currentFirstItemTime = 0L
 
-            val result = ArrayList<MediaGroup>(groupedMap.size)
+            fun flushCurrentGroup() {
+                if (currentGroupItems.isNotEmpty()) {
+                    calendar.timeInMillis = currentFirstItemTime
+                    val itemYear = calendar.get(Calendar.YEAR)
+                    val isToday = (currentDay == todayDay)
+                    val isYesterday = (currentDay == yesterdayDay)
+                    val isThisYear = (itemYear == currentYear)
 
-            for ((_, groupItems) in groupedMap) {
-                val firstItem = groupItems.first()
-                val timeMillis = if (firstItem.dateAdded > 10_000_000_000L) firstItem.dateAdded else firstItem.dateAdded * 1000L
-                calendar.timeInMillis = timeMillis
+                    val dateObj = Date(currentFirstItemTime)
+                    val title = when {
+                        isToday -> "Today"
+                        isYesterday -> "Yesterday"
+                        isThisYear -> dayDateFormatter.format(dateObj)
+                        else -> fullDateFormatter.format(dateObj)
+                    }
+                    val subtitle = monthYearFormatter.format(dateObj)
 
-                val itemYear = calendar.get(Calendar.YEAR)
-                val itemDay = calendar.get(Calendar.DAY_OF_YEAR)
-
-                val isToday = (itemYear == todayYear && itemDay == todayDay)
-                val isYesterday = (itemYear == yestYear && itemDay == yestDay)
-                val isThisYear = (itemYear == todayYear)
-
-                val dateObj = Date(timeMillis)
-                val title = when {
-                    isToday -> "Today"
-                    isYesterday -> "Yesterday"
-                    isThisYear -> dayDateFormatter.format(dateObj)
-                    else -> fullDateFormatter.format(dateObj)
-                }
-
-                val subtitle = monthYearFormatter.format(dateObj)
-
-                result.add(
-                    MediaGroup(
-                        title = title,
-                        dateSubtitle = subtitle,
-                        items = groupItems
+                    result.add(
+                        MediaGroup(
+                            title = title,
+                            dateSubtitle = subtitle,
+                            items = currentGroupItems
+                        )
                     )
-                )
+                }
             }
+
+            for (item in items) {
+                val timeMillis = if (item.dateAdded > 10_000_000_000L) item.dateAdded else item.dateAdded * 1000L
+                val itemDay = (timeMillis + tzOffset) / 86_400_000L
+
+                if (itemDay == currentDay) {
+                    currentGroupItems.add(item)
+                } else {
+                    flushCurrentGroup()
+                    currentDay = itemDay
+                    currentFirstItemTime = timeMillis
+                    currentGroupItems = ArrayList()
+                    currentGroupItems.add(item)
+                }
+            }
+            flushCurrentGroup()
 
             return result
         }

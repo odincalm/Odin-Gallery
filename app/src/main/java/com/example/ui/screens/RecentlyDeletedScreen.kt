@@ -146,7 +146,11 @@ fun RecentlyDeletedScreen(
                 modifier = Modifier.fillMaxSize()
             ) {
                 // Header item: Title and actions
-                item(span = { GridItemSpan(3) }) {
+                item(
+                    key = "recently_deleted_header",
+                    span = { GridItemSpan(3) },
+                    contentType = "header"
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -585,12 +589,17 @@ private fun DeletedThumbnailItem(
             .background(Color(0xFF1C1C1E))
             .clickable(onClick = onClick)
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(context)
+        val imageRequest = remember(item.trashFilePath) {
+            ImageRequest.Builder(context)
                 .data(File(item.trashFilePath))
-                .crossfade(true)
                 .size(300)
-                .build(),
+                .allowHardware(true)
+                .allowRgb565(true)
+                .crossfade(false)
+                .build()
+        }
+        AsyncImage(
+            model = imageRequest,
             contentDescription = item.displayName,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()

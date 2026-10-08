@@ -40,16 +40,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Enable high refresh rate (90Hz, 120Hz, 144Hz) for smooth scrolling
+        // Synchronize with device display refresh rate (60Hz, 90Hz, 120Hz, 144Hz)
+        // Supports dynamic refresh-rate adaptation (VRR/LTPO) without forcing rigid display modes
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                display?.supportedModes?.maxByOrNull { it.refreshRate }?.let { maxMode ->
+                val modes = display?.supportedModes ?: emptyArray()
+                val highestMode = modes.filter { it.refreshRate >= 90f }.maxByOrNull { it.refreshRate }
+                if (highestMode != null) {
                     window.attributes = window.attributes.apply {
-                        preferredDisplayModeId = maxMode.modeId
+                        preferredDisplayModeId = highestMode.modeId
                     }
                 }
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Graceful fallback to system display manager defaults
             }
         }
 

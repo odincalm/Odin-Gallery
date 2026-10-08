@@ -5,7 +5,7 @@
 ### A fast, private, offline-first Android gallery.
 
 <p>
-  <b>Built with Kotlin • Jetpack Compose • Android Media APIs</b>
+  <b>Kotlin • Jetpack Compose • Android Media APIs</b>
 </p>
 
 <p>
@@ -20,7 +20,7 @@
 <br>
 
 <img
-  src="YOUR_DIRECT_IMAGE_URL"
+  src="./odin-gallery-banner.png"
   width="100%"
   alt="Odin Gallery"
 />
@@ -31,15 +31,19 @@
 
 ## ⚡ Odin Gallery
 
-Odin Gallery is a **privacy-focused Android gallery** designed around one simple idea:
+Odin Gallery is a **privacy-focused Android gallery** built around one simple idea:
 
 > Your photos belong on your device.
 
-No unnecessary cloud dependency.  
-No forced AI features.  
-No account required for the core gallery experience.
+Odin Gallery is designed to provide a fast, clean and modern way to manage photos and videos while keeping the core gallery experience completely local.
 
-Just a fast, clean and modern gallery for your photos and videos.
+No account is required for the core gallery.
+
+No unnecessary cloud dependency.
+
+No forced AI features.
+
+Just your media, your device and a fast gallery experience.
 
 ---
 
@@ -47,32 +51,42 @@ Just a fast, clean and modern gallery for your photos and videos.
 
 | Feature | Description |
 |---|---|
-| 📱 **Offline First** | Browse and manage your media without an internet connection |
-| ⚡ **Smooth Performance** | Optimized scrolling and media rendering |
+| 📱 **Offline First** | Browse and manage photos and videos without an internet connection |
+| ⚡ **Smooth Performance** | Optimized scrolling, rendering and media loading |
 | 🖼️ **Photos & Videos** | View photos and play videos directly inside the gallery |
-| 📁 **Smart Organization** | Media is organized according to its source folders |
-| ❤️ **Favorites** | Quickly access your favorite media |
+| 📁 **Smart Organization** | Media can be organized according to its source folders |
+| ❤️ **Favorites** | Quickly access your favorite photos and videos |
 | 🗑️ **Recently Deleted** | Restore deleted media or permanently remove it |
 | 🔒 **Hidden Media** | Protect private photos and videos behind a lock |
-| 📤 **Native Sharing** | Use Android's native system share functionality |
-| 🌑 **OLED UI** | Dark interface designed for modern AMOLED/OLED displays |
+| 📤 **Native Sharing** | Use Android's native system sharing |
+| 🌑 **OLED UI** | Dark interface designed for AMOLED/OLED displays |
 | 🔐 **Privacy Focused** | Local-first architecture with no unnecessary data collection |
 
 ---
 
-## 🎨 Designed For Android
+## 🎨 Design
 
-Odin Gallery is built around a modern Android interface focused on speed, simplicity and privacy.
+Odin Gallery focuses on a modern, minimal and premium Android experience.
 
-### Design principles
+The interface combines:
+
+- OLED-friendly dark UI
+- Clean layouts
+- Smooth animations
+- Glass-inspired visual elements
+- Fast interactions
+- Minimal visual clutter
+- High refresh-rate friendly rendering
+
+The goal is simple:
 
 ```text
 Minimal UI
      ↓
-Fast interaction
+Fast Interaction
      ↓
-Smooth scrolling
+Smooth Scrolling
      ↓
-Low visual clutter
+Low Visual Clutter
      ↓
-Privacy first
+Privacy First

@@ -1,22 +1,78 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+
+# 🖼️ Odin Gallery
+
+### A fast, private, offline-first Android gallery.
+
+<p>
+  <b>Built with Kotlin • Jetpack Compose • Android Media APIs</b>
+</p>
+
+<p>
+  <a href="https://github.com/odincalm">
+    <img src="https://img.shields.io/badge/GitHub-odincalm-111111?style=for-the-badge&logo=github&logoColor=white" />
+  </a>
+  <a href="https://www.instagram.com/odincalm0">
+    <img src="https://img.shields.io/badge/Instagram-@odincalm0-111111?style=for-the-badge&logo=instagram&logoColor=white" />
+  </a>
+</p>
+
+<br>
+
+<img
+  src="YOUR_DIRECT_IMAGE_URL"
+  width="100%"
+  alt="Odin Gallery"
+/>
+
 </div>
 
-# Run and deploy your AI Studio app
+---
 
-This contains everything you need to run your app locally.
+## ⚡ Odin Gallery
 
-View your app in AI Studio: https://ai.studio/apps/b50c0442-387d-4b64-8f19-14244f3fc0f7
+Odin Gallery is a **privacy-focused Android gallery** designed around one simple idea:
 
-## Run Locally
+> Your photos belong on your device.
 
-**Prerequisites:**  [Android Studio](https://developer.android.com/studio)
+No unnecessary cloud dependency.  
+No forced AI features.  
+No account required for the core gallery experience.
 
+Just a fast, clean and modern gallery for your photos and videos.
 
-1. Open Android Studio
-2. Select **Open** and choose the directory containing this project
-3. Allow Android Studio to fix any incompatibilities as it imports the project.
-4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
-5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
-6. Run the app on an emulator or physical device
-7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---|---|
+| 📱 **Offline First** | Browse and manage your media without an internet connection |
+| ⚡ **Smooth Performance** | Optimized scrolling and media rendering |
+| 🖼️ **Photos & Videos** | View photos and play videos directly inside the gallery |
+| 📁 **Smart Organization** | Media is organized according to its source folders |
+| ❤️ **Favorites** | Quickly access your favorite media |
+| 🗑️ **Recently Deleted** | Restore deleted media or permanently remove it |
+| 🔒 **Hidden Media** | Protect private photos and videos behind a lock |
+| 📤 **Native Sharing** | Use Android's native system share functionality |
+| 🌑 **OLED UI** | Dark interface designed for modern AMOLED/OLED displays |
+| 🔐 **Privacy Focused** | Local-first architecture with no unnecessary data collection |
+
+---
+
+## 🎨 Designed For Android
+
+Odin Gallery is built around a modern Android interface focused on speed, simplicity and privacy.
+
+### Design principles
+
+```text
+Minimal UI
+     ↓
+Fast interaction
+     ↓
+Smooth scrolling
+     ↓
+Low visual clutter
+     ↓
+Privacy first

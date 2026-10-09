@@ -79,7 +79,8 @@ class DonateTest {
         composeTestRule.onNodeWithTag("donate_pay_button").performScrollTo().assertIsDisplayed()
 
         // Verify Back button works
-        composeTestRule.onNodeWithTag("donate_back_button").performClick()
+        composeTestRule.onNodeWithTag("donate_back_button").performScrollTo().performClick()
+        composeTestRule.waitForIdle()
         assertTrue("Back callback should have been invoked", backClicked)
     }
 

@@ -51,6 +51,7 @@ import com.example.model.AlbumItem
 import com.example.ui.components.GlassSurface
 import com.example.ui.screens.AlbumDetailScreen
 import com.example.ui.screens.AlbumsScreen
+import com.example.ui.screens.BackupScreen
 import com.example.ui.screens.DonateScreen
 import com.example.ui.screens.HiddenScreen
 import com.example.ui.screens.MediaViewerScreen
@@ -76,6 +77,7 @@ sealed class ScreenDestination {
     data object Settings : ScreenDestination()
     data object Hidden : ScreenDestination()
     data object Donate : ScreenDestination()
+    data object Backup : ScreenDestination()
 }
 
 @Composable
@@ -94,6 +96,7 @@ fun OdinMainNavigation(
         currentDestination = when (currentDestination) {
             is ScreenDestination.Donate -> ScreenDestination.Settings
             is ScreenDestination.Hidden -> ScreenDestination.Settings
+            is ScreenDestination.Backup -> ScreenDestination.Settings
             else -> ScreenDestination.Main
         }
     }
@@ -147,7 +150,14 @@ fun OdinMainNavigation(
                     viewModel = viewModel,
                     onBack = { currentDestination = ScreenDestination.Main },
                     onOpenHiddenVault = { currentDestination = ScreenDestination.Hidden },
-                    onOpenDonate = { currentDestination = ScreenDestination.Donate }
+                    onOpenDonate = { currentDestination = ScreenDestination.Donate },
+                    onOpenBackup = { currentDestination = ScreenDestination.Backup }
+                )
+            }
+            is ScreenDestination.Backup -> {
+                BackupScreen(
+                    galleryViewModel = viewModel,
+                    onBack = { currentDestination = ScreenDestination.Settings }
                 )
             }
             is ScreenDestination.Hidden -> {

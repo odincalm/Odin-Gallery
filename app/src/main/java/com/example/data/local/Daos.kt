@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -154,4 +155,79 @@ interface UserPrefDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun setPreference(entity: UserPrefEntity)
+}
+
+@Dao
+interface TelegramBackupDao {
+    @Query("SELECT * FROM telegram_backup_items ORDER BY queuedAt DESC")
+    fun getAllBackupItemsFlow(): Flow<List<TelegramBackupItem>>
+
+    @Query("SELECT * FROM telegram_backup_items WHERE status = 'COMPLETED' ORDER BY completedAt DESC, queuedAt DESC")
+    fun getAllCompletedFlow(): Flow<List<TelegramBackupItem>>
+
+    @Query("SELECT * FROM telegram_backup_items WHERE status = 'PENDING' ORDER BY queuedAt ASC")
+    suspend fun getPendingItems(): List<TelegramBackupItem>
+
+    @Query("SELECT * FROM telegram_backup_items WHERE status = 'FAILED' ORDER BY queuedAt ASC")
+    suspend fun getFailedItems(): List<TelegramBackupItem>
+
+    @Query("SELECT * FROM telegram_backup_items WHERE status = 'COMPLETED'")
+    suspend fun getCompletedItems(): List<TelegramBackupItem>
+
+    @Query("SELECT * FROM telegram_backup_items WHERE localMediaId = :mediaId LIMIT 1")
+    suspend fun getItemByMediaId(mediaId: Long): TelegramBackupItem?
+
+    @Query("SELECT * FROM telegram_backup_items WHERE telegramMessageId = :messageId LIMIT 1")
+    suspend fun getItemByMessageId(messageId: Long): TelegramBackupItem?
+
+    @Query("SELECT * FROM telegram_backup_items WHERE fileHash = :hash LIMIT 1")
+    suspend fun getItemByHash(hash: String): TelegramBackupItem?
+
+    @Query("SELECT * FROM telegram_backup_items WHERE fileHash = :hash AND status = 'COMPLETED' LIMIT 1")
+    suspend fun getCompletedItemByHash(hash: String): TelegramBackupItem?
+
+    @Query("SELECT COUNT(*) FROM telegram_backup_items WHERE status = 'PENDING'")
+    fun getPendingCountFlow(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM telegram_backup_items WHERE status = 'FAILED'")
+    fun getFailedCountFlow(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM telegram_backup_items WHERE status = 'COMPLETED'")
+    fun getCompletedCountFlow(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM telegram_backup_items WHERE status = 'COMPLETED'")
+    suspend fun getCompletedCount(): Int
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(item: TelegramBackupItem): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBatch(items: List<TelegramBackupItem>)
+
+    @Update
+    suspend fun update(item: TelegramBackupItem)
+
+    @Query("UPDATE telegram_backup_items SET thumbnailPath = :thumbnailPath WHERE id = :id")
+    suspend fun updateThumbnailPath(id: Long, thumbnailPath: String)
+
+    @Query("UPDATE telegram_backup_items SET status = :status, errorMessage = :errorMessage WHERE id = :id")
+    suspend fun updateStatus(id: Long, status: String, errorMessage: String? = null)
+
+    @Query("UPDATE telegram_backup_items SET status = 'PENDING' WHERE status = 'UPLOADING'")
+    suspend fun resetUploadingToPending(): Int
+
+    @Query("UPDATE telegram_backup_items SET status = 'PENDING', retryCount = 0, errorMessage = null WHERE status = 'FAILED'")
+    suspend fun resetFailedItemsToPending(): Int
+
+    @Query("DELETE FROM telegram_backup_items WHERE id = :id")
+    suspend fun deleteById(id: Long)
+
+    @Query("DELETE FROM telegram_backup_items WHERE telegramMessageId = :messageId")
+    suspend fun deleteByMessageId(messageId: Long)
+
+    @Query("DELETE FROM telegram_backup_items WHERE localMediaId = :mediaId")
+    suspend fun deleteByMediaId(mediaId: Long)
+
+    @Query("DELETE FROM telegram_backup_items")
+    suspend fun clearAll()
 }

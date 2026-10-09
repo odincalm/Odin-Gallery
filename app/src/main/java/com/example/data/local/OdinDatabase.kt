@@ -15,9 +15,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         DeletedMediaEntity::class,
         HiddenMediaEntity::class,
         PlaybackPositionEntity::class,
-        UserPrefEntity::class
+        UserPrefEntity::class,
+        TelegramBackupItem::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class OdinDatabase : RoomDatabase() {
@@ -27,6 +28,7 @@ abstract class OdinDatabase : RoomDatabase() {
     abstract fun hiddenMediaDao(): HiddenMediaDao
     abstract fun playbackDao(): PlaybackDao
     abstract fun userPrefDao(): UserPrefDao
+    abstract fun telegramBackupDao(): TelegramBackupDao
 
     companion object {
         @Volatile
@@ -52,6 +54,54 @@ abstract class OdinDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS telegram_backup_items (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        localMediaId INTEGER NOT NULL,
+                        uriString TEXT,
+                        filePath TEXT,
+                        fileName TEXT NOT NULL,
+                        mediaType TEXT NOT NULL,
+                        sizeBytes INTEGER NOT NULL,
+                        fileHash TEXT NOT NULL,
+                        telegramMessageId INTEGER NOT NULL DEFAULT 0,
+                        telegramFileId INTEGER NOT NULL DEFAULT 0,
+                        thumbnailFileId INTEGER NOT NULL DEFAULT 0,
+                        thumbnailPath TEXT,
+                        status TEXT NOT NULL DEFAULT 'PENDING',
+                        errorMessage TEXT,
+                        retryCount INTEGER NOT NULL DEFAULT 0,
+                        dateModified INTEGER NOT NULL DEFAULT 0,
+                        width INTEGER NOT NULL DEFAULT 0,
+                        height INTEGER NOT NULL DEFAULT 0,
+                        duration INTEGER NOT NULL DEFAULT 0,
+                        queuedAt INTEGER NOT NULL,
+                        completedAt INTEGER
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_telegram_backup_items_localMediaId ON telegram_backup_items (localMediaId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_telegram_backup_items_fileHash ON telegram_backup_items (fileHash)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_telegram_backup_items_telegramMessageId ON telegram_backup_items (telegramMessageId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_telegram_backup_items_status ON telegram_backup_items (status)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN thumbnailFileId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN thumbnailPath TEXT")
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN dateModified INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN width INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN height INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE telegram_backup_items ADD COLUMN duration INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_telegram_backup_items_telegramMessageId ON telegram_backup_items (telegramMessageId)")
+            }
+        }
+
         fun getInstance(context: Context): OdinDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -59,7 +109,7 @@ abstract class OdinDatabase : RoomDatabase() {
                     OdinDatabase::class.java,
                     "odin_gallery.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

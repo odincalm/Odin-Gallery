@@ -20,7 +20,13 @@ data class MediaItem(
     val bucketDisplayName: String? = null,
     val relativePath: String? = null,
     val isFavorite: Boolean = false,
-    val isHidden: Boolean = false
+    val isHidden: Boolean = false,
+    val isCloudOnly: Boolean = false,
+    val isCloudSynced: Boolean = false,
+    val cloudMessageId: Long? = null,
+    val cloudFileId: Int? = null,
+    val cloudThumbnailPath: String? = null,
+    val cloudFileHash: String? = null
 ) {
     val durationFormatted: String
         get() {
@@ -72,7 +78,8 @@ enum class SystemAlbumType {
     FAVORITES,
     RECENTLY_ADDED,
     RECENTLY_DELETED,
-    HIDDEN
+    HIDDEN,
+    TELEGRAM_CLOUD
 }
 
 @Immutable

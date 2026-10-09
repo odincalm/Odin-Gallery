@@ -14,7 +14,7 @@ android {
 
   defaultConfig {
     applicationId = "com.nitin.odingallery"
-    minSdk = 24
+    minSdk = 26
     targetSdk = 36
     versionCode = 1
     versionName = "1.0"
@@ -103,6 +103,10 @@ dependencies {
   implementation(libs.androidx.media3.ui)
   implementation(libs.androidx.biometric)
   implementation(libs.zxing.core)
+  implementation(libs.tdlib.core)
+  implementation(libs.tdlib.ktx)
+  implementation(libs.androidx.work.runtime.ktx)
+  implementation(libs.androidx.security.crypto)
   // implementation(libs.converter.moshi)
   // implementation(libs.firebase.ai)
   // Uncomment to use Firestore:

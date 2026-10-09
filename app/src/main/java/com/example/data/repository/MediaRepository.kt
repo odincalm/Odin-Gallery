@@ -78,6 +78,18 @@ class MediaRepository(private val context: Context) {
                 val scanned = scanner.queryAllMedia()
                 _rawMediaFlow.value = scanned
                 reconcileStaleMetadata(scanned)
+
+                // Enqueue new media for Telegram cloud backup if enabled
+                try {
+                    val backupPrefs = com.example.telegram.data.TelegramBackupPreferences(context)
+                    if (backupPrefs.isBackupEnabled.value && backupPrefs.backupNewMediaAutomatically.value) {
+                        val backupRepo = com.example.telegram.data.TelegramBackupRepository(context)
+                        val enqueued = backupRepo.enqueueMediaItems(scanned)
+                        if (enqueued > 0) {
+                            com.example.telegram.worker.TelegramBackupWorker.enqueueBackup(context)
+                        }
+                    }
+                } catch (ignored: Exception) {}
             } catch (e: Exception) {
                 e.printStackTrace()
             } finally {

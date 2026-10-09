@@ -86,3 +86,36 @@ data class UserPrefEntity(
     @PrimaryKey val key: String,
     val value: String
 )
+
+@Entity(
+    tableName = "telegram_backup_items",
+    indices = [
+        Index(value = ["localMediaId"]),
+        Index(value = ["fileHash"]),
+        Index(value = ["telegramMessageId"]),
+        Index(value = ["status"])
+    ]
+)
+data class TelegramBackupItem(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val localMediaId: Long = 0L,
+    val uriString: String? = null,
+    val filePath: String? = null,
+    val fileName: String,
+    val mediaType: String, // "IMAGE" or "VIDEO"
+    val sizeBytes: Long,
+    val fileHash: String, // SHA-256
+    val telegramMessageId: Long = 0L,
+    val telegramFileId: Int = 0,
+    val thumbnailFileId: Int = 0,
+    val thumbnailPath: String? = null,
+    val status: String = "PENDING", // PENDING, UPLOADING, COMPLETED, FAILED
+    val errorMessage: String? = null,
+    val retryCount: Int = 0,
+    val dateModified: Long = 0L,
+    val width: Int = 0,
+    val height: Int = 0,
+    val duration: Long = 0L,
+    val queuedAt: Long = System.currentTimeMillis(),
+    val completedAt: Long? = null
+)

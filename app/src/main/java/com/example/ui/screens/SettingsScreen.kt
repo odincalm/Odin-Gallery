@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -57,18 +58,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.R
+import com.example.telegram.model.TelegramAuthState
 import com.example.ui.theme.OdinAnimations
 import com.example.ui.theme.OdinColors
 import com.example.ui.theme.OdinTypography
 import com.example.ui.viewmodel.GalleryViewModel
+import com.example.ui.viewmodel.TelegramBackupViewModel
 
 @Composable
 fun SettingsScreen(
     viewModel: GalleryViewModel,
     onBack: () -> Unit,
     onOpenHiddenVault: () -> Unit,
-    onOpenDonate: () -> Unit = {}
+    onOpenDonate: () -> Unit = {},
+    onOpenBackup: () -> Unit = {},
+    telegramViewModel: TelegramBackupViewModel = viewModel()
 ) {
     val context = LocalContext.current
     val activeMedia by viewModel.activeMedia.collectAsStateWithLifecycle()
@@ -170,6 +176,30 @@ fun SettingsScreen(
                     title = "Hide Photos",
                     icon = Icons.Outlined.Lock,
                     onClick = onOpenHiddenVault
+                )
+            }
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            // Cloud Backup Dedicated Section
+            SectionHeader(title = "CLOUD BACKUP")
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                val authState by telegramViewModel.authState.collectAsStateWithLifecycle()
+                val subtitle = when (authState) {
+                    is TelegramAuthState.Ready -> "Connected • Saved Messages"
+                    is TelegramAuthState.Connecting -> "Connecting..."
+                    else -> "Saved Messages Backup"
+                }
+                SettingsActionRow(
+                    title = "Telegram Backup",
+                    subtitle = subtitle,
+                    icon = Icons.Outlined.CloudUpload,
+                    onClick = onOpenBackup
                 )
             }
 
@@ -398,6 +428,7 @@ private fun ThemeOptionRow(
 private fun SettingsActionRow(
     title: String,
     icon: ImageVector,
+    subtitle: String? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -416,11 +447,20 @@ private fun SettingsActionRow(
                 modifier = Modifier.size(20.dp)
             )
             Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = title,
-                style = OdinTypography.body,
-                color = MaterialTheme.colorScheme.onSurface
-            )
+            Column {
+                Text(
+                    text = title,
+                    style = OdinTypography.body,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                subtitle?.let {
+                    Text(
+                        text = it,
+                        style = OdinTypography.caption,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
         }
         Icon(
             imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,

@@ -491,19 +491,60 @@ private fun ImageViewerPage(
             },
             contentAlignment = Alignment.Center
         ) {
-            val fullImageRequest = remember(item.uri) {
-                ImageRequest.Builder(context)
-                    .data(item.uri)
-                    .allowHardware(true)
-                    .crossfade(true)
-                    .build()
+            // Materialize cloud-only originals on demand so the viewer never loads an empty/invalid URI
+            var resolvedUri by remember(item.id) { mutableStateOf(item.uri) }
+            var isLoadingCloud by remember(item.id) { mutableStateOf(false) }
+            var loadError by remember(item.id) { mutableStateOf<String?>(null) }
+
+            LaunchedEffect(item.id) {
+                val needsDownload = item.isCloudOnly &&
+                    (item.uri == Uri.EMPTY || item.uri.scheme == null ||
+                        (item.uri.scheme == "file" && (item.uri.path == null || !java.io.File(item.uri.path!!).exists())))
+                if (needsDownload && item.cloudFileId != null && item.cloudFileId != 0) {
+                    isLoadingCloud = true
+                    loadError = null
+                    val result = withContext(Dispatchers.IO) {
+                        TelegramRestoreManager.restoreMediaItem(context, item)
+                    }
+                    result.fold(
+                        onSuccess = { file ->
+                            if (file.exists() && file.length() > 0) {
+                                resolvedUri = Uri.fromFile(file)
+                            } else {
+                                loadError = "Downloaded file is empty"
+                            }
+                        },
+                        onFailure = { e ->
+                            loadError = e.message ?: "Failed to download from Telegram"
+                        }
+                    )
+                    isLoadingCloud = false
+                }
             }
-            AsyncImage(
-                model = fullImageRequest,
-                contentDescription = item.displayName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
+
+            when {
+                isLoadingCloud -> {
+                    CircularProgressIndicator(color = Color.White)
+                }
+                loadError != null -> {
+                    Text(text = loadError ?: "Error", color = Color.White)
+                }
+                resolvedUri != Uri.EMPTY -> {
+                    val fullImageRequest = remember(resolvedUri) {
+                        ImageRequest.Builder(context)
+                            .data(resolvedUri)
+                            .allowHardware(true)
+                            .crossfade(true)
+                            .build()
+                    }
+                    AsyncImage(
+                        model = fullImageRequest,
+                        contentDescription = item.displayName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
         }
     }
 }

@@ -346,4 +346,102 @@ class TelegramBackupTest {
         assertEquals("Logging back in must automatically rebuild cloud index with all 400 items", 400, dao.getCompletedCount())
         assertNotNull(dao.getItemByMessageId(9400L))
     }
+
+    @Test
+    fun testBlankHashIsNotTreatedAsDuplicate() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val a = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "a.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 100L,
+            fileHash = "",
+            telegramMessageId = 1L,
+            telegramFileId = 10,
+            status = "COMPLETED"
+        )
+        val b = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "b.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 200L,
+            fileHash = "",
+            telegramMessageId = 2L,
+            telegramFileId = 20,
+            status = "COMPLETED"
+        )
+        dao.insertBatch(listOf(a, b))
+        // Both must remain because blank hash must not collapse rows
+        assertEquals(2, dao.getCompletedCount())
+        assertNotNull(dao.getItemByMessageId(1L))
+        assertNotNull(dao.getItemByMessageId(2L))
+    }
+
+    @Test
+    fun testPaginationBeyond100ItemsNoDuplicates() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val items = (1..250).map { i ->
+            TelegramBackupItem(
+                localMediaId = 0L,
+                fileName = "page_$i.jpg",
+                mediaType = "IMAGE",
+                sizeBytes = 1024L,
+                fileHash = "hash_page_$i",
+                telegramMessageId = 10000L + i,
+                telegramFileId = 5000 + i,
+                status = "COMPLETED"
+            )
+        }
+        dao.insertBatch(items)
+        assertEquals(250, dao.getCompletedCount())
+        // Re-insert same message IDs (sync replay) must not create duplicates
+        dao.insertBatch(items)
+        assertEquals(250, dao.getCompletedCount())
+    }
+
+    @Test
+    fun testFavoritePersistenceForCloudOnlySyntheticId() = runBlocking {
+        val favDao = db.favoriteDao()
+        val cloudOnlyId = -100_000L - 42L
+        favDao.insertFavorite(
+            com.example.data.local.FavoriteEntity(
+                originalMediaId = cloudOnlyId,
+                uriString = "",
+                isFavorite = true
+            )
+        )
+        val all = favDao.getAllFavoritesSync()
+        assertTrue(all.any { it.originalMediaId == cloudOnlyId && it.isFavorite })
+        favDao.deleteFavoriteByMediaId(cloudOnlyId)
+        assertFalse(favDao.getAllFavoritesSync().any { it.originalMediaId == cloudOnlyId })
+    }
+
+    @Test
+    fun testCloudOnlySyntheticIdMappingIsStable() {
+        val backupRowId = 7L
+        val cloudOnlyId = -100_000L - backupRowId
+        val recovered = -cloudOnlyId - 100_000L
+        assertEquals(backupRowId, recovered)
+    }
+
+    @Test
+    fun testRepeatedSyncDoesNotDuplicateByMessageId() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val item = TelegramBackupItem(
+            localMediaId = 11L,
+            fileName = "once.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 50L,
+            fileHash = "hash_once",
+            telegramMessageId = 555L,
+            telegramFileId = 99,
+            status = "COMPLETED"
+        )
+        dao.insertBatch(listOf(item))
+        dao.insertBatch(listOf(item.copy(thumbnailPath = "/tmp/thumb.jpg")))
+        assertEquals(1, dao.getCompletedCount())
+        val stored = dao.getItemByMessageId(555L)
+        assertNotNull(stored)
+        assertEquals("/tmp/thumb.jpg", stored!!.thumbnailPath)
+    }
 }

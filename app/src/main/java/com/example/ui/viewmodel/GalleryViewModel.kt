@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentSender
 import android.net.Uri
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.DeletedMediaEntity
@@ -625,40 +627,89 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         _themeMode.value = mode
     }
 
-    // Sharing via Android Sharesheet
+    // Sharing via Android Sharesheet — always use content:// URIs (FileProvider or MediaStore)
     fun shareMedia(context: Context, items: List<MediaItem>) {
         if (items.isEmpty()) return
         viewModelScope.launch {
-            val readyItems = items.map { item ->
-                if (item.isCloudOnly && item.cloudFileId != null) {
-                    val result = TelegramRestoreManager.restoreMediaItem(context, item)
-                    if (result.isSuccess) {
-                        val file = result.getOrNull()
-                        if (file != null && file.exists()) {
-                            item.copy(uri = Uri.fromFile(file))
-                        } else item
-                    } else item
-                } else item
+            val shareableUris = mutableListOf<Pair<Uri, String>>()
+            for (item in items) {
+                try {
+                    val uri = resolveShareableUri(context, item) ?: continue
+                    val mime = when {
+                        item.mimeType.isNotBlank() && item.mimeType != "*/*" -> item.mimeType
+                        item.isVideo -> "video/*"
+                        else -> "image/*"
+                    }
+                    shareableUris.add(uri to mime)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
+            if (shareableUris.isEmpty()) return@launch
+
             withContext(Dispatchers.Main) {
-                if (readyItems.size == 1) {
-                    val item = readyItems.first()
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = item.mimeType
-                        putExtra(Intent.EXTRA_STREAM, item.uri)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                try {
+                    if (shareableUris.size == 1) {
+                        val (uri, mime) = shareableUris.first()
+                        val intent = Intent(Intent.ACTION_SEND).apply {
+                            type = mime
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share media"))
+                    } else {
+                        val uris = ArrayList(shareableUris.map { it.first })
+                        val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                            type = "*/*"
+                            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(intent, "Share ${uris.size} items"))
                     }
-                    context.startActivity(Intent.createChooser(intent, "Share ${item.displayName}"))
-                } else {
-                    val uris = ArrayList(readyItems.map { it.uri })
-                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                        type = "*/*"
-                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(Intent.createChooser(intent, "Share ${readyItems.size} items"))
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
             }
         }
+    }
+
+    /**
+     * Produce a shareable content:// URI. Never exposes file:// paths (FileUriExposedException).
+     * Cloud-only items are materialized via TDLib first when needed.
+     */
+    private suspend fun resolveShareableUri(context: Context, item: MediaItem): Uri? {
+        // MediaStore content:// is already shareable
+        if (item.uri.scheme == "content" && item.uri != Uri.EMPTY) {
+            return item.uri
+        }
+
+        // Cloud-only or file-backed: ensure we have a real file on disk
+        var file: File? = null
+        if (item.isCloudOnly && item.cloudFileId != null && item.cloudFileId != 0) {
+            val result = TelegramRestoreManager.restoreMediaItem(context, item)
+            file = result.getOrNull()?.takeIf { it.exists() && it.length() > 0 }
+        } else if (item.uri.scheme == "file") {
+            file = item.uri.path?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+        }
+
+        if (file == null) {
+            // Try opening the existing URI as a stream into cache for FileProvider
+            try {
+                val cacheDir = File(context.cacheDir, "share").apply { mkdirs() }
+                val target = File(cacheDir, item.displayName.ifBlank { "media_${item.id}" })
+                context.contentResolver.openInputStream(item.uri)?.use { input ->
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (target.exists() && target.length() > 0) file = target
+            } catch (_: Exception) {}
+        }
+
+        if (file == null || !file.exists()) return null
+
+        return FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
     }
 }

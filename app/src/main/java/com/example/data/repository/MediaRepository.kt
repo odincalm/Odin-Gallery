@@ -161,41 +161,58 @@ class MediaRepository(private val context: Context) {
         }
 
         // 2. Add cloud-only media (backed up from other devices or missing locally)
+        // Never fabricate a content:// URI for missing files — only use a real local path.
         val deletedHashesOrNames = deletedItems.map { "${it.displayName}_${it.size}" }.toSet()
+        val seenCloudHashes = mutableSetOf<String>()
 
         for (backup in completedBackups) {
             // Do not expose cloud items if they were locally deleted or hidden by the user
-            if (backup.localMediaId in deletedIds || backup.localMediaId in hiddenIds) continue
+            if (backup.localMediaId > 0 && (backup.localMediaId in deletedIds || backup.localMediaId in hiddenIds)) continue
             val deletedKey = "${backup.fileName}_${backup.sizeBytes}"
             if (deletedKey in deletedHashesOrNames) continue
 
+            // Skip blank-hash items for hash-based dedup only; never treat blank as a duplicate key
+            if (backup.fileHash.isNotBlank()) {
+                if (backup.fileHash in seenCloudHashes) continue
+                seenCloudHashes.add(backup.fileHash)
+            }
+
             val isLocalPresent = backup.localMediaId > 0 && backup.localMediaId in localScannedIds
-            val isLocalHashPresent = backup.fileHash.isNotBlank() && resultList.any { it.cloudFileHash == backup.fileHash }
+            val isLocalHashPresent = backup.fileHash.isNotBlank() &&
+                resultList.any { it.cloudFileHash == backup.fileHash && !it.isCloudOnly }
 
             if (!isLocalPresent && !isLocalHashPresent) {
                 val cloudOnlyId = -100_000L - backup.id
-                val mediaFile = backup.filePath?.let { File(it) }
-                val thumbnailFile = backup.thumbnailPath?.let { File(it) }
+                val mediaFile = backup.filePath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
+                val thumbnailFile = backup.thumbnailPath?.let { File(it) }?.takeIf { it.exists() && it.length() > 0 }
 
+                // Prefer real original, then valid thumbnail. Empty URI means "not materialized yet".
                 val usableUri = when {
-                    mediaFile != null && mediaFile.exists() -> Uri.fromFile(mediaFile)
-                    thumbnailFile != null && thumbnailFile.exists() -> Uri.fromFile(thumbnailFile)
-                    else -> Uri.parse("content://odin.cloud.media/${backup.id}")
+                    mediaFile != null -> Uri.fromFile(mediaFile)
+                    thumbnailFile != null -> Uri.fromFile(thumbnailFile)
+                    else -> Uri.EMPTY
                 }
+
+                // Normalize timestamp: backup metadata uses millis; MediaStore uses seconds
+                val tsMillis = backup.dateModified
+                val dateAddedSeconds = if (tsMillis > 10_000_000_000L) tsMillis / 1000L else tsMillis
+                val dateModifiedSeconds = dateAddedSeconds
+
+                val isFav = cloudOnlyId in favoriteIds
 
                 val cloudItem = MediaItem(
                     id = cloudOnlyId,
                     uri = usableUri,
                     displayName = backup.fileName,
-                    mimeType = if (backup.mediaType == "VIDEO") "video/*" else "image/*",
-                    dateAdded = backup.dateModified,
-                    dateModified = backup.dateModified,
+                    mimeType = if (backup.mediaType == "VIDEO") "video/mp4" else "image/jpeg",
+                    dateAdded = dateAddedSeconds,
+                    dateModified = dateModifiedSeconds,
                     size = backup.sizeBytes,
                     width = backup.width,
                     height = backup.height,
                     duration = backup.duration,
                     isVideo = backup.mediaType == "VIDEO",
-                    isFavorite = false,
+                    isFavorite = isFav,
                     isHidden = false,
                     isCloudOnly = true,
                     isCloudSynced = true,
@@ -208,7 +225,10 @@ class MediaRepository(private val context: Context) {
             }
         }
 
-        resultList.sortedByDescending { it.dateModified }
+        // Sort by normalized seconds-based dateModified descending for consistent ordering
+        resultList.sortedByDescending { item ->
+            if (item.dateModified > 10_000_000_000L) item.dateModified / 1000L else item.dateModified
+        }
     }.flowOn(Dispatchers.Default)
 
     // Hidden media flow (accessible strictly in the Hidden vault)
@@ -263,20 +283,51 @@ class MediaRepository(private val context: Context) {
     }
 
     // Recently Deleted Operations
+    /**
+     * Moves local media to Recently Deleted (trash). Cloud-only items are removed from the
+     * local cloud index only — Telegram Saved Messages are never deleted by this path.
+     */
     suspend fun moveToRecentlyDeleted(
         items: List<MediaItem>,
         intentSenderRequester: suspend (IntentSender) -> Boolean
     ): Boolean {
-        val success = recentlyDeletedManager.moveToRecentlyDeleted(items, intentSenderRequester)
-        if (success) {
-            val ids = items.map { it.id }
-            favoriteDao.deleteFavoritesByMediaIds(ids)
-            albumDao.deleteMediaFromAllAlbumsBatch(ids)
-            hiddenMediaDao.deleteHiddenByMediaIds(ids)
-            clearCoilCache()
-            scanMedia()
+        val localItems = items.filter { !it.isCloudOnly }
+        val cloudOnlyItems = items.filter { it.isCloudOnly }
+
+        var localSuccess = true
+        if (localItems.isNotEmpty()) {
+            localSuccess = recentlyDeletedManager.moveToRecentlyDeleted(localItems, intentSenderRequester)
+            if (localSuccess) {
+                val ids = localItems.map { it.id }
+                favoriteDao.deleteFavoritesByMediaIds(ids)
+                albumDao.deleteMediaFromAllAlbumsBatch(ids)
+                hiddenMediaDao.deleteHiddenByMediaIds(ids)
+            }
         }
-        return success
+
+        // Cloud-only: remove from local Telegram index and favorites only (local deletion intent)
+        if (cloudOnlyItems.isNotEmpty()) {
+            val dao = db.telegramBackupDao()
+            for (item in cloudOnlyItems) {
+                val messageId = item.cloudMessageId
+                if (messageId != null && messageId > 0L) {
+                    dao.deleteByMessageId(messageId)
+                } else {
+                    // Fallback: synthetic id maps to backup row as -100_000 - backup.id
+                    val backupId = -item.id - 100_000L
+                    if (backupId > 0) dao.deleteById(backupId)
+                }
+                favoriteDao.deleteFavoriteByMediaId(item.id)
+                albumDao.deleteMediaFromAllAlbums(item.id)
+            }
+        }
+
+        if (localSuccess || cloudOnlyItems.isNotEmpty()) {
+            clearCoilCache()
+            if (localItems.isNotEmpty()) scanMedia()
+            return true
+        }
+        return false
     }
 
     suspend fun restoreDeletedItems(entities: List<DeletedMediaEntity>): Int {

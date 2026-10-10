@@ -1,6 +1,7 @@
 package com.example.telegram.client
 
 import android.content.Context
+import com.example.telegram.data.TelegramBackupPreferences
 import com.example.telegram.data.TelegramSyncManager
 import com.example.telegram.model.TelegramAuthState
 import com.example.telegram.model.TelegramUser
@@ -175,11 +176,13 @@ object TelegramAuthManager {
     suspend fun logOut(context: Context): Result<Unit> = withContext(Dispatchers.IO) {
         return@withContext try {
             _authState.value = TelegramAuthState.LoggingOut
+            TelegramBackupPreferences(context).resetScanState()
             TelegramClientHolder.sendWithTimeout(context, TdApi.LogOut(), 15_000L)
             TelegramSavedMessagesHelper.clearCachedChatId()
             _authState.value = TelegramAuthState.Uninitialized
             Result.success(Unit)
         } catch (t: Throwable) {
+            TelegramBackupPreferences(context).resetScanState()
             TelegramSavedMessagesHelper.clearCachedChatId()
             TelegramClientHolder.closeClient()
             _authState.value = TelegramAuthState.Uninitialized

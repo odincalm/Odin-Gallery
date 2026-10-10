@@ -12,6 +12,7 @@ import com.example.telegram.data.TelegramBackupPreferences
 import com.example.telegram.data.TelegramBackupRepository
 import com.example.telegram.data.TelegramFileUtil
 import com.example.telegram.data.TelegramUploader
+import com.example.telegram.model.AuditReport
 import com.example.telegram.model.BackupStats
 import com.example.telegram.model.DiscoveredCloudItem
 import com.example.telegram.model.NetworkPreference
@@ -79,6 +80,9 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
     private val _restoreProgress = MutableStateFlow(0 to 0) // current to total
     val restoreProgress: StateFlow<Pair<Int, Int>> = _restoreProgress.asStateFlow()
 
+    private val _auditReport = MutableStateFlow<AuditReport?>(null)
+    val auditReport: StateFlow<AuditReport?> = _auditReport.asStateFlow()
+
     init {
         try {
             TelegramAuthManager.init(context)
@@ -87,6 +91,36 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
 
     fun connectTelegram() {
         TelegramAuthManager.init(context)
+    }
+
+    fun runAuditReport() {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            try {
+                val report = repository.auditPipeline()
+                _auditReport.value = report
+                _userFeedbackMessage.value = "Audit complete: ${report.odinBackupMessagesFound} Odin backups in ${report.messagesExamined} Saved Messages examined (${report.pagesFetched} pages)."
+            } catch (e: Exception) {
+                _userFeedbackMessage.value = "Audit failed: ${e.message}"
+            } finally {
+                _isActionLoading.value = false
+            }
+        }
+    }
+
+    fun rescanCloudHistoryNow(forceFullRescan: Boolean = true) {
+        viewModelScope.launch {
+            _isActionLoading.value = true
+            try {
+                repository.syncWithCloud(forceFullRescan = forceFullRescan) { count ->
+                    _userFeedbackMessage.value = "Rescan complete: discovered $count items."
+                }
+            } catch (e: Exception) {
+                _userFeedbackMessage.value = "Rescan failed: ${e.message}"
+            } finally {
+                _isActionLoading.value = false
+            }
+        }
     }
 
     fun sendPhoneNumber(phoneNumber: String) {

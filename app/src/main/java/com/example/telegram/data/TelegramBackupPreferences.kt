@@ -69,6 +69,59 @@ class TelegramBackupPreferences(context: Context) {
         _lastBackupTime.value = timestamp
     }
 
+    fun getHistoricalScanCursorMessageId(): Long {
+        return prefs.getLong(KEY_HISTORICAL_SCAN_CURSOR, prefs.getLong(KEY_SCAN_CURSOR_MSG_ID, 0L))
+    }
+
+    fun setHistoricalScanCursorMessageId(messageId: Long) {
+        prefs.edit().putLong(KEY_HISTORICAL_SCAN_CURSOR, messageId).putLong(KEY_SCAN_CURSOR_MSG_ID, messageId).apply()
+    }
+
+    fun isHistoricalScanCompleted(): Boolean {
+        return prefs.getBoolean(KEY_HISTORICAL_SCAN_COMPLETED, prefs.getBoolean(KEY_SCAN_COMPLETED, false))
+    }
+
+    fun setHistoricalScanCompleted(completed: Boolean) {
+        prefs.edit().putBoolean(KEY_HISTORICAL_SCAN_COMPLETED, completed).putBoolean(KEY_SCAN_COMPLETED, completed).apply()
+    }
+
+    fun getNewestMessageCheckpoint(): Long {
+        return prefs.getLong(KEY_NEWEST_MSG_CHECKPOINT, 0L)
+    }
+
+    fun setNewestMessageCheckpoint(messageId: Long) {
+        val current = getNewestMessageCheckpoint()
+        if (messageId > current) {
+            prefs.edit().putLong(KEY_NEWEST_MSG_CHECKPOINT, messageId).apply()
+        }
+    }
+
+    fun getScanCursorMessageId(): Long {
+        return getHistoricalScanCursorMessageId()
+    }
+
+    fun setScanCursorMessageId(messageId: Long) {
+        setHistoricalScanCursorMessageId(messageId)
+    }
+
+    fun isScanCompleted(): Boolean {
+        return isHistoricalScanCompleted()
+    }
+
+    fun setScanCompleted(completed: Boolean) {
+        setHistoricalScanCompleted(completed)
+    }
+
+    fun resetScanState() {
+        prefs.edit()
+            .remove(KEY_SCAN_CURSOR_MSG_ID)
+            .remove(KEY_SCAN_COMPLETED)
+            .remove(KEY_HISTORICAL_SCAN_CURSOR)
+            .remove(KEY_HISTORICAL_SCAN_COMPLETED)
+            .remove(KEY_NEWEST_MSG_CHECKPOINT)
+            .apply()
+    }
+
     companion object {
         private const val PREFS_NAME = "odin_telegram_backup_prefs"
         private const val KEY_BACKUP_ENABLED = "backup_enabled"
@@ -78,5 +131,10 @@ class TelegramBackupPreferences(context: Context) {
         private const val KEY_BACKUP_EXISTING = "backup_existing"
         private const val KEY_BACKUP_NEW_AUTO = "backup_new_auto"
         private const val KEY_LAST_BACKUP = "last_backup_timestamp"
+        private const val KEY_SCAN_CURSOR_MSG_ID = "scan_cursor_msg_id"
+        private const val KEY_SCAN_COMPLETED = "scan_completed"
+        private const val KEY_HISTORICAL_SCAN_CURSOR = "historical_scan_cursor"
+        private const val KEY_HISTORICAL_SCAN_COMPLETED = "historical_scan_completed"
+        private const val KEY_NEWEST_MSG_CHECKPOINT = "newest_msg_checkpoint"
     }
 }

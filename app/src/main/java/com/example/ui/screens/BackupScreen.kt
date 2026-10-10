@@ -112,6 +112,7 @@ fun BackupScreen(
     val discoveredItems by telegramViewModel.discoveredItems.collectAsStateWithLifecycle()
     val isRestoring by telegramViewModel.isRestoring.collectAsStateWithLifecycle()
     val restoreProgress by telegramViewModel.restoreProgress.collectAsStateWithLifecycle()
+    val auditReport by telegramViewModel.auditReport.collectAsStateWithLifecycle()
 
     var showPhoneDialog by remember { mutableStateOf(false) }
     var showCodeDialog by remember { mutableStateOf(false) }
@@ -827,6 +828,54 @@ fun BackupScreen(
                         Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Clear Cloud Backups")
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                // Card 5: Diagnostics & Audit
+                SectionHeader(title = "DIAGNOSTICS & AUDIT")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(16.dp)
+                ) {
+                    Button(
+                        onClick = { telegramViewModel.runAuditReport() },
+                        enabled = !isActionLoading,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("run_audit_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Run Diagnostic Audit")
+                    }
+
+                    auditReport?.let { report ->
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                                .padding(12.dp)
+                        ) {
+                            Text("Audit Diagnostic Report", style = OdinTypography.subheadline, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("Pages Fetched: ${report.pagesFetched}", style = OdinTypography.caption)
+                            Text("Messages Examined: ${report.messagesExamined}", style = OdinTypography.caption)
+                            Text("Oldest Message ID: ${report.oldestMessageId}", style = OdinTypography.caption)
+                            Text("Newest Message ID: ${report.newestMessageId}", style = OdinTypography.caption)
+                            Text("Media Discovered: ${report.totalMediaDiscovered} (${report.photosDiscovered} photos, ${report.videosDiscovered} videos, ${report.documentsDiscovered} docs)", style = OdinTypography.caption)
+                            Text("Database Records: ${report.completedQueueCount} completed, ${report.pendingQueueCount} pending, ${report.failedQueueCount} failed", style = OdinTypography.caption)
+                            Text("Gallery Visible Records: ${report.galleryVisibleCount}", style = OdinTypography.caption)
+                            Text("Duplicates Skipped: ${report.duplicateRemoteMessages}", style = OdinTypography.caption)
+                        }
                     }
                 }
 

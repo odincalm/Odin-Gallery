@@ -37,3 +37,26 @@ data class DiscoveredCloudItem(
     val telegramDate: Int,
     val isAlreadyLocal: Boolean = false
 )
+
+data class AuditReport(
+    val localDiscoveredCount: Int = 0,
+    val uniqueLocalIdentitiesCount: Int = 0,
+    val pendingQueueCount: Int = 0,
+    val completedQueueCount: Int = 0,
+    val failedQueueCount: Int = 0,
+    val pagesFetched: Int = 0,
+    val messagesExamined: Int = 0,
+    val oldestMessageId: Long = 0L,
+    val newestMessageId: Long = 0L,
+    val photosDiscovered: Int = 0,
+    val videosDiscovered: Int = 0,
+    val documentsDiscovered: Int = 0,
+    val totalMediaDiscovered: Int = 0,
+    val odinBackupMessagesFound: Int = 0,
+    val validMetadataParsed: Int = 0,
+    val validRemoteMappings: Int = 0,
+    val galleryVisibleCount: Int = 0,
+    val duplicateLocalRecords: Int = 0,
+    val duplicateRemoteMessages: Int = 0,
+    val skippedSummary: Map<String, Int> = emptyMap()
+)

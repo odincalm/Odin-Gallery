@@ -8,6 +8,7 @@ import com.example.data.local.OdinDatabase
 import com.example.data.local.TelegramBackupItem
 import com.example.model.MediaItem
 import com.example.telegram.client.TelegramSavedMessagesHelper
+import com.example.telegram.data.TelegramBackupPreferences
 import com.example.telegram.data.TelegramBackupRepository
 import com.example.telegram.data.TelegramNetworkUtil
 import com.example.telegram.model.NetworkPreference
@@ -552,4 +553,123 @@ class TelegramBackupTest {
         assertEquals(1080, retrieved.height)
         assertEquals(150000L, retrieved.duration)
     }
+
+    @Test
+    fun testUntaggedPhotoVideoDocumentExtraction() {
+        val photoMessage = TdApi.Message().apply {
+            id = 5001L
+            date = 1700000000
+            content = TdApi.MessagePhoto().apply {
+                caption = TdApi.FormattedText("Just a regular photo caption", emptyArray())
+                photo = TdApi.Photo(
+                    false,
+                    null,
+                    arrayOf(TdApi.PhotoSize("m", TdApi.File(101, 0, 0, null, null), 320, 240, IntArray(0)))
+                )
+            }
+        }
+
+        val extractedPhoto = TelegramSavedMessagesHelper.extractMediaInfo(photoMessage)
+        assertNotNull("Untagged photo must be extracted", extractedPhoto)
+        assertFalse("Untagged photo must not be marked as Odin backup", extractedPhoto!!.isOdinBackup)
+        assertEquals("IMAGE", extractedPhoto.metadata.mediaType)
+        assertEquals("msg_5001", extractedPhoto.metadata.fileHash)
+
+        val videoMessage = TdApi.Message().apply {
+            id = 5002L
+            date = 1700000100
+            content = TdApi.MessageVideo().apply {
+                caption = null
+                video = TdApi.Video(
+                    120, 1920, 1080, "vacation.mp4", "video/mp4", false, true, null, null,
+                    TdApi.File(202, 0, 0, null, null)
+                )
+            }
+        }
+
+        val extractedVideo = TelegramSavedMessagesHelper.extractMediaInfo(videoMessage)
+        assertNotNull("Untagged video must be extracted", extractedVideo)
+        assertEquals("VIDEO", extractedVideo!!.metadata.mediaType)
+        assertEquals("vacation.mp4", extractedVideo.metadata.fileName)
+        assertEquals("msg_5002", extractedVideo.metadata.fileHash)
+    }
+
+    @Test
+    fun testSyntheticHashDoesNotCollapseDistinctMessages() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val item1 = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "untagged1.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 1000L,
+            fileHash = "msg_7001",
+            telegramMessageId = 7001L,
+            telegramFileId = 111,
+            status = "COMPLETED"
+        )
+        val item2 = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "untagged2.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 2000L,
+            fileHash = "msg_7002",
+            telegramMessageId = 7002L,
+            telegramFileId = 222,
+            status = "COMPLETED"
+        )
+
+        dao.insertBatch(listOf(item1, item2))
+        assertEquals(2, dao.getCompletedCount())
+        assertNotNull(dao.getItemByMessageId(7001L))
+        assertNotNull(dao.getItemByMessageId(7002L))
+    }
+
+    @Test
+    fun testPersistentScanCursorAndResumableProgress() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = TelegramBackupPreferences(context)
+
+        prefs.resetScanState()
+        assertEquals(0L, prefs.getScanCursorMessageId())
+        assertFalse(prefs.isScanCompleted())
+
+        prefs.setScanCursorMessageId(12345L)
+        assertEquals(12345L, prefs.getScanCursorMessageId())
+
+        prefs.setScanCompleted(true)
+        assertTrue(prefs.isScanCompleted())
+
+        prefs.resetScanState()
+        assertEquals(0L, prefs.getScanCursorMessageId())
+        assertFalse(prefs.isScanCompleted())
+    }
+
+    @Test
+    fun testCrossDeviceMessageIdResolutionAndUpsert() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val item = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "shared.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 3000L,
+            fileHash = "msg_8001",
+            telegramMessageId = 8001L,
+            telegramFileId = 0, // 0 on fresh device before resolution
+            status = "COMPLETED"
+        )
+
+        dao.insertBatch(listOf(item))
+        val initial = dao.getItemByMessageId(8001L)
+        assertNotNull(initial)
+        assertEquals(0, initial!!.telegramFileId)
+
+        // Resolve fresh local file ID on Device B
+        dao.insertBatch(listOf(initial.copy(telegramFileId = 9999, thumbnailFileId = 8888)))
+        assertEquals(1, dao.getCompletedCount())
+        val updated = dao.getItemByMessageId(8001L)
+        assertNotNull(updated)
+        assertEquals(9999, updated!!.telegramFileId)
+        assertEquals(8888, updated.thumbnailFileId)
+    }
 }
+

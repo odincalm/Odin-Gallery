@@ -149,7 +149,7 @@ fun MediaViewerScreen(
 
     // Automatically trigger full media download when viewing a cloud-only item
     LaunchedEffect(currentItem.id, currentItem.isCloudOnly) {
-        if (currentItem.isCloudOnly && currentItem.cloudFileId != null) {
+        if (currentItem.isCloudOnly) {
             withContext(Dispatchers.IO) {
                 try {
                     TelegramRestoreManager.restoreMediaItem(context, currentItem)
@@ -502,8 +502,8 @@ private fun ImageViewerPage(
                     (item.uri == Uri.EMPTY || item.uri.scheme == null ||
                         (item.uri.scheme == "file" && (item.uri.path == null || !File(item.uri.path!!).exists())))
                 if (needsDownload) {
-                    if (item.cloudFileId == null || item.cloudFileId == 0) {
-                        loadError = "Cloud backup file ID missing"
+                    if ((item.cloudFileId == null || item.cloudFileId == 0) && (item.cloudMessageId == null || item.cloudMessageId == 0L)) {
+                        loadError = "Cloud backup media identity missing"
                         return@LaunchedEffect
                     }
                     isLoadingCloud = true
@@ -607,8 +607,8 @@ private fun VideoPlayerPage(
             (item.uri == Uri.EMPTY || item.uri.scheme == null ||
                 (item.uri.scheme == "file" && (item.uri.path == null || !File(item.uri.path!!).exists())))
         if (needsDownload) {
-            if (item.cloudFileId == null || item.cloudFileId == 0) {
-                loadError = "Cloud backup file ID missing"
+            if ((item.cloudFileId == null || item.cloudFileId == 0) && (item.cloudMessageId == null || item.cloudMessageId == 0L)) {
+                loadError = "Cloud backup media identity missing"
                 return@LaunchedEffect
             }
             isLoadingCloud = true

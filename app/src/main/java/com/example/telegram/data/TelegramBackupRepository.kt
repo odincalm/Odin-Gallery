@@ -3,11 +3,16 @@ package com.example.telegram.data
 import android.content.Context
 import com.example.data.local.OdinDatabase
 import com.example.data.local.TelegramBackupItem
+import com.example.data.repository.MediaRepository
+import com.example.data.repository.MediaStoreScanner
 import com.example.model.MediaItem
+import com.example.telegram.client.TelegramSavedMessagesHelper
+import com.example.telegram.model.AuditReport
 import com.example.telegram.model.BackupStats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 class TelegramBackupRepository(private val context: Context) {
@@ -31,6 +36,73 @@ class TelegramBackupRepository(private val context: Context) {
 
     fun getAllCompletedFlow(): Flow<List<TelegramBackupItem>> = dao.getAllCompletedFlow()
 
+    suspend fun auditPipeline(): AuditReport = withContext(Dispatchers.IO) {
+        val scanner = MediaStoreScanner(context)
+        val localItems = try {
+            scanner.queryAllMedia()
+        } catch (e: Exception) {
+            emptyList()
+        }
+
+        val localDiscovered = localItems.size
+        val uniqueLocalIdentities = localItems.map { it.id }.toSet().size
+
+        val pending = dao.getPendingItems().size
+        val completed = dao.getCompletedCount()
+        val failed = dao.getFailedItems().size
+
+        val historyAudit = try {
+            TelegramSavedMessagesHelper.auditSavedMessagesHistory(context)
+        } catch (e: Exception) {
+            TelegramSavedMessagesHelper.HistoryAuditResult(
+                pagesFetched = 0,
+                messagesExamined = 0,
+                oldestMessageId = 0L,
+                newestMessageId = 0L,
+                photosDiscovered = 0,
+                videosDiscovered = 0,
+                documentsDiscovered = 0,
+                odinBackupMessagesFound = 0,
+                validMetadataParsed = 0,
+                validRemoteMappings = 0,
+                duplicateRemoteMessages = 0,
+                skippedSummary = emptyMap(),
+                discoveredItems = emptyList()
+            )
+        }
+
+        val mediaRepo = MediaRepository(context)
+        val galleryVisible = try {
+            mediaRepo.activeMediaFlow.first().size
+        } catch (e: Exception) {
+            0
+        } finally {
+            mediaRepo.cleanup()
+        }
+
+        AuditReport(
+            localDiscoveredCount = localDiscovered,
+            uniqueLocalIdentitiesCount = uniqueLocalIdentities,
+            pendingQueueCount = pending,
+            completedQueueCount = completed,
+            failedQueueCount = failed,
+            pagesFetched = historyAudit.pagesFetched,
+            messagesExamined = historyAudit.messagesExamined,
+            oldestMessageId = historyAudit.oldestMessageId,
+            newestMessageId = historyAudit.newestMessageId,
+            photosDiscovered = historyAudit.photosDiscovered,
+            videosDiscovered = historyAudit.videosDiscovered,
+            documentsDiscovered = historyAudit.documentsDiscovered,
+            totalMediaDiscovered = historyAudit.discoveredItems.size,
+            odinBackupMessagesFound = historyAudit.odinBackupMessagesFound,
+            validMetadataParsed = historyAudit.validMetadataParsed,
+            validRemoteMappings = historyAudit.validRemoteMappings,
+            galleryVisibleCount = galleryVisible,
+            duplicateRemoteMessages = historyAudit.duplicateRemoteMessages,
+            skippedSummary = historyAudit.skippedSummary
+        )
+    }
+
     suspend fun enqueueMediaItems(items: List<MediaItem>): Int = withContext(Dispatchers.IO) {
         val backupPhotos = preferences.backupPhotos.value
         val backupVideos = preferences.backupVideos.value
@@ -49,37 +121,37 @@ class TelegramBackupRepository(private val context: Context) {
 
             // Content identity check via SHA-256
             val hash = TelegramFileUtil.computeSha256(context, item.uri)
-            if (hash.isNotBlank()) {
-                val existingByHash = dao.getItemByHash(hash)
-                if (existingByHash != null) {
-                    if (existingByHash.status == "PENDING" || existingByHash.status == "UPLOADING") {
-                        continue
-                    }
-                    if (existingByHash.status == "COMPLETED") {
-                        // Already backed up under identical hash! Mark completed immediately without re-uploading
-                        dao.insert(
-                            TelegramBackupItem(
-                                localMediaId = item.id,
-                                uriString = item.uri.toString(),
-                                filePath = null,
-                                fileName = item.displayName,
-                                mediaType = if (item.isVideo) "VIDEO" else "IMAGE",
-                                sizeBytes = item.size,
-                                fileHash = hash,
-                                telegramMessageId = existingByHash.telegramMessageId,
-                                telegramFileId = existingByHash.telegramFileId,
-                                thumbnailFileId = existingByHash.thumbnailFileId,
-                                thumbnailPath = existingByHash.thumbnailPath,
-                                status = "COMPLETED",
-                                dateModified = item.dateModified,
-                                width = item.width,
-                                height = item.height,
-                                duration = item.duration,
-                                completedAt = System.currentTimeMillis()
-                            )
+            val finalHash = hash.ifBlank { "hash_${item.id}_${item.size}_${item.dateModified}" }
+
+            val existingByHash = dao.getItemByHash(finalHash)
+            if (existingByHash != null) {
+                if (existingByHash.status == "PENDING" || existingByHash.status == "UPLOADING") {
+                    continue
+                }
+                if (existingByHash.status == "COMPLETED") {
+                    // Already backed up under identical hash! Mark completed immediately without re-uploading
+                    dao.insert(
+                        TelegramBackupItem(
+                            localMediaId = item.id,
+                            uriString = item.uri.toString(),
+                            filePath = null,
+                            fileName = item.displayName,
+                            mediaType = if (item.isVideo) "VIDEO" else "IMAGE",
+                            sizeBytes = item.size,
+                            fileHash = finalHash,
+                            telegramMessageId = existingByHash.telegramMessageId,
+                            telegramFileId = existingByHash.telegramFileId,
+                            thumbnailFileId = existingByHash.thumbnailFileId,
+                            thumbnailPath = existingByHash.thumbnailPath,
+                            status = "COMPLETED",
+                            dateModified = item.dateModified,
+                            width = item.width,
+                            height = item.height,
+                            duration = item.duration,
+                            completedAt = System.currentTimeMillis()
                         )
-                        continue
-                    }
+                    )
+                    continue
                 }
             }
 
@@ -90,7 +162,7 @@ class TelegramBackupRepository(private val context: Context) {
                 fileName = item.displayName,
                 mediaType = if (item.isVideo) "VIDEO" else "IMAGE",
                 sizeBytes = item.size,
-                fileHash = hash.ifBlank { "hash_${item.id}_${item.size}_${item.dateModified}" },
+                fileHash = finalHash,
                 status = "PENDING",
                 dateModified = item.dateModified,
                 width = item.width,
@@ -119,7 +191,7 @@ class TelegramBackupRepository(private val context: Context) {
         dao.getPendingItems()
     }
 
-    fun syncWithCloud(onComplete: ((Int) -> Unit)? = null) {
-        TelegramSyncManager.syncWithCloud(context, onComplete)
+    fun syncWithCloud(forceFullRescan: Boolean = false, onComplete: ((Int) -> Unit)? = null) {
+        TelegramSyncManager.syncWithCloud(context, forceFullRescan, onComplete)
     }
 }

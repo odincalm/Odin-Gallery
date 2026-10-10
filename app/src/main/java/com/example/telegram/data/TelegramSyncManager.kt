@@ -1,7 +1,9 @@
 package com.example.telegram.data
 
 import android.content.Context
+import android.util.Log
 import com.example.data.local.OdinDatabase
+import com.example.data.local.TelegramBackupDao
 import com.example.data.local.TelegramBackupItem
 import com.example.telegram.client.TelegramAuthManager
 import com.example.telegram.client.TelegramClientHolder
@@ -11,15 +13,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
+import kotlin.math.abs
 
 object TelegramSyncManager {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -68,7 +71,6 @@ object TelegramSyncManager {
                         } catch (ignored: Exception) {}
                     }
                     is TdApi.UpdateFile -> {
-                        // When a thumbnail (or original) finishes downloading, persist the real local path
                         val file = update.file
                         val local = file.local
                         if (local != null && local.isDownloadingCompleted && !local.path.isNullOrBlank()) {
@@ -88,7 +90,7 @@ object TelegramSyncManager {
         }
     }
 
-    fun syncWithCloud(context: Context, onComplete: ((Int) -> Unit)? = null) {
+    fun syncWithCloud(context: Context, forceFullRescan: Boolean = false, onComplete: ((Int) -> Unit)? = null) {
         if (_isSyncing.value) return
 
         scope.launch {
@@ -110,46 +112,75 @@ object TelegramSyncManager {
                 val database = OdinDatabase.getInstance(context)
                 val dao = database.telegramBackupDao()
                 val chatId = TelegramSavedMessagesHelper.getSavedMessagesChatId(context)
+                val prefs = TelegramBackupPreferences(context)
 
-                var fromMessageId = 0L
+                if (forceFullRescan) {
+                    prefs.resetScanState()
+                }
+
+                var fromMessageId = if (forceFullRescan) 0L else prefs.getScanCursorMessageId()
                 var hasMore = true
                 val batchSize = 100
 
+                Log.d("TelegramSync", "Starting sync. forceFullRescan=$forceFullRescan, initialFromMsgId=$fromMessageId")
+
                 while (hasMore) {
-                    val searchResult = try {
+                    Log.d("TelegramSync", "Syncing page starting fromMessageId=$fromMessageId")
+                    val history = try {
                         TelegramClientHolder.sendWithTimeout(
                             context,
-                            TdApi.SearchChatMessages(
+                            TdApi.GetChatHistory(
                                 chatId,
-                                null,
-                                "#ODIN_BACKUP",
-                                null,
                                 fromMessageId,
                                 0,
                                 batchSize,
-                                null
+                                false
                             ),
-                            15_000L
+                            20_000L
                         )
                     } catch (e: Exception) {
+                        Log.e("TelegramSync", "Failed to fetch history: ${e.message}")
                         break
                     }
 
-                    if (searchResult.messages.isEmpty()) {
+                    val rawMessages = history.messages.orEmpty()
+                    Log.d("TelegramSync", "Received ${rawMessages.size} messages")
+
+                    if (rawMessages.isEmpty()) {
                         hasMore = false
+                        prefs.setScanCompleted(true)
                         break
                     }
 
-                    for (message in searchResult.messages) {
-                        val added = processSingleCloudMessage(context, message, dao)
-                        if (added) discoveredCount++
+                    val messages = if (fromMessageId != 0L && rawMessages.firstOrNull()?.id == fromMessageId) {
+                        rawMessages.drop(1)
+                    } else {
+                        rawMessages.toList()
                     }
 
-                    val lastMsg = searchResult.messages.lastOrNull()
-                    if (lastMsg != null && lastMsg.id != fromMessageId) {
-                        fromMessageId = lastMsg.id
+                    if (messages.isEmpty()) {
+                        hasMore = false
+                        prefs.setScanCompleted(true)
+                        break
+                    }
+
+                    var addedInPage = 0
+                    for (message in messages) {
+                        val added = processSingleCloudMessage(context, message, dao)
+                        if (added) {
+                            addedInPage++
+                            discoveredCount++
+                        }
+                    }
+                    Log.d("TelegramSync", "Processed page. Added $addedInPage new items. Total so far: $discoveredCount")
+
+                    val lastMsgId = messages.last().id
+                    if (lastMsgId != 0L && lastMsgId != fromMessageId) {
+                        fromMessageId = lastMsgId
+                        prefs.setScanCursorMessageId(fromMessageId)
                     } else {
                         hasMore = false
+                        prefs.setScanCompleted(true)
                     }
                 }
 
@@ -163,98 +194,170 @@ object TelegramSyncManager {
         }
     }
 
+    suspend fun resolveRemoteMessage(
+        context: Context,
+        messageId: Long
+    ): Pair<Int, Int>? = withContext(Dispatchers.IO) {
+        if (messageId <= 0L) return@withContext null
+        try {
+            val chatId = TelegramSavedMessagesHelper.getSavedMessagesChatId(context)
+            val message = TelegramClientHolder.sendWithTimeout(
+                context,
+                TdApi.GetMessage(chatId, messageId),
+                10_000L
+            )
+
+            var originalFileId = 0
+            var thumbnailFileId = 0
+            var mediaWidth = 0
+            var mediaHeight = 0
+            var mediaDuration = 0L
+
+            when (val content = message.content) {
+                is TdApi.MessagePhoto -> {
+                    val sizes = content.photo?.sizes.orEmpty()
+                    val largest = sizes.maxByOrNull { it.width * it.height }
+                    originalFileId = largest?.photo?.id ?: 0
+                    mediaWidth = largest?.width ?: 0
+                    mediaHeight = largest?.height ?: 0
+
+                    val mid = sizes
+                        .filter { it.width in 100..640 || it.height in 100..640 }
+                        .minByOrNull { abs(it.width - 320) + abs(it.height - 320) }
+                    val smallest = sizes.filter { it.width > 0 && it.height > 0 }.minByOrNull { it.width * it.height }
+                    thumbnailFileId = (mid ?: smallest)?.photo?.id ?: 0
+                }
+                is TdApi.MessageVideo -> {
+                    originalFileId = content.video?.video?.id ?: 0
+                    thumbnailFileId = content.video?.thumbnail?.file?.id ?: 0
+                    mediaWidth = content.video?.width ?: 0
+                    mediaHeight = content.video?.height ?: 0
+                    mediaDuration = (content.video?.duration ?: 0) * 1000L
+                }
+                is TdApi.MessageDocument -> {
+                    originalFileId = content.document?.document?.id ?: 0
+                    thumbnailFileId = content.document?.thumbnail?.file?.id ?: 0
+                }
+            }
+
+            if (originalFileId != 0) {
+                val dao = OdinDatabase.getInstance(context).telegramBackupDao()
+                val existing = dao.getItemByMessageId(messageId)
+                if (existing != null) {
+                    dao.update(
+                        existing.copy(
+                            telegramFileId = originalFileId,
+                            thumbnailFileId = if (thumbnailFileId != 0) thumbnailFileId else existing.thumbnailFileId,
+                            width = if (mediaWidth > 0) mediaWidth else existing.width,
+                            height = if (mediaHeight > 0) mediaHeight else existing.height,
+                            duration = if (mediaDuration > 0) mediaDuration else existing.duration
+                        )
+                    )
+                }
+                return@withContext Pair(originalFileId, thumbnailFileId)
+            }
+        } catch (e: Exception) {
+            Log.w("TelegramSyncManager", "resolveRemoteMessage failed for messageId=$messageId: ${e.message}")
+        }
+        return@withContext null
+    }
+
     private suspend fun processSingleCloudMessage(
         context: Context,
         message: TdApi.Message,
-        dao: com.example.data.local.TelegramBackupDao
+        dao: TelegramBackupDao
     ): Boolean = withContext(Dispatchers.IO) {
-        var captionText: String? = null
-        var originalFileId = 0
-        var thumbnailFileId = 0
-        var mediaWidth = 0
-        var mediaHeight = 0
-        var mediaDuration = 0L
-
-        when (val content = message.content) {
-            is TdApi.MessagePhoto -> {
-                captionText = content.caption?.text
-                val sizes = content.photo?.sizes.orEmpty()
-                val largest = sizes.maxByOrNull { it.width * it.height }
-                originalFileId = largest?.photo?.id ?: 0
-                mediaWidth = largest?.width ?: 0
-                mediaHeight = largest?.height ?: 0
-
-                val mid = sizes
-                    .filter { it.width in 100..640 || it.height in 100..640 }
-                    .minByOrNull { kotlin.math.abs(it.width - 320) + kotlin.math.abs(it.height - 320) }
-                val smallest = sizes.filter { it.width > 0 && it.height > 0 }
-                    .minByOrNull { it.width * it.height }
-                thumbnailFileId = (mid ?: smallest)?.photo?.id ?: 0
-            }
-            is TdApi.MessageVideo -> {
-                captionText = content.caption?.text
-                originalFileId = content.video?.video?.id ?: 0
-                thumbnailFileId = content.video?.thumbnail?.file?.id ?: 0
-                mediaWidth = content.video?.width ?: 0
-                mediaHeight = content.video?.height ?: 0
-                mediaDuration = (content.video?.duration ?: 0) * 1000L
-            }
-            else -> return@withContext false
-        }
-
-        val metadata = TelegramSavedMessagesHelper.parseBackupCaption(captionText)
+        val mediaInfo = TelegramSavedMessagesHelper.extractMediaInfo(message)
             ?: return@withContext false
+
+        val metadata = mediaInfo.metadata
+        val originalFileId = mediaInfo.originalFileId
+        val thumbnailFileId = mediaInfo.thumbnailFileId
+        val mediaWidth = mediaInfo.mediaWidth
+        val mediaHeight = mediaInfo.mediaHeight
+        val mediaDuration = mediaInfo.mediaDuration
+
+        val resolvedHash = metadata.fileHash.ifBlank { "msg_${message.id}" }
+        val isSyntheticHash = resolvedHash.startsWith("msg_") || resolvedHash.startsWith("legacy_msg_") || resolvedHash.startsWith("hash_")
+        val resolvedName = if (metadata.fileName == "odin_backup_file") {
+            "odin_media_${message.id}.${if (metadata.mediaType == "VIDEO") "mp4" else "jpg"}"
+        } else metadata.fileName
+        val resolvedTs = if (metadata.timestamp == 0L) message.date * 1000L else metadata.timestamp
+
+        var initialThumbPath: String? = null
+        if (thumbnailFileId != 0) {
+            try {
+                val tf = TelegramClientHolder.send(context, TdApi.GetFile(thumbnailFileId))
+                if (tf.local?.isDownloadingCompleted == true && !tf.local.path.isNullOrBlank()) {
+                    initialThumbPath = tf.local.path
+                }
+            } catch (ignored: Exception) {}
+        }
 
         val existingByMsg = dao.getItemByMessageId(message.id)
         if (existingByMsg != null) {
-            if (existingByMsg.thumbnailPath.isNullOrBlank() && thumbnailFileId != 0) {
+            val updated = existingByMsg.copy(
+                telegramFileId = if (originalFileId != 0) originalFileId else existingByMsg.telegramFileId,
+                thumbnailFileId = if (thumbnailFileId != 0) thumbnailFileId else existingByMsg.thumbnailFileId,
+                thumbnailPath = initialThumbPath ?: existingByMsg.thumbnailPath,
+                status = "COMPLETED",
+                completedAt = resolvedTs,
+                width = if (existingByMsg.width > 0) existingByMsg.width else mediaWidth,
+                height = if (existingByMsg.height > 0) existingByMsg.height else mediaHeight,
+                duration = if (existingByMsg.duration > 0) existingByMsg.duration else mediaDuration
+            )
+            dao.update(updated)
+            if (thumbnailFileId != 0 && updated.thumbnailPath.isNullOrBlank()) {
                 requestThumbnailDownload(context, thumbnailFileId)
             }
             return@withContext false
         }
 
-        val existingByHash = if (metadata.fileHash.isNotBlank()) dao.getItemByHash(metadata.fileHash) else null
-        if (existingByHash != null) {
-            val updated = existingByHash.copy(
-                telegramMessageId = message.id,
-                telegramFileId = originalFileId,
-                thumbnailFileId = thumbnailFileId,
-                status = "COMPLETED",
-                completedAt = metadata.timestamp,
-                width = if (existingByHash.width > 0) existingByHash.width else mediaWidth,
-                height = if (existingByHash.height > 0) existingByHash.height else mediaHeight,
-                duration = if (existingByHash.duration > 0) existingByHash.duration else mediaDuration
-            )
-            dao.update(updated)
-            if (thumbnailFileId != 0) {
-                requestThumbnailDownload(context, thumbnailFileId)
+        if (!isSyntheticHash && resolvedHash.isNotBlank()) {
+            val existingByHash = dao.getItemByHash(resolvedHash)
+            if (existingByHash != null) {
+                val updated = existingByHash.copy(
+                    telegramMessageId = message.id,
+                    telegramFileId = originalFileId,
+                    thumbnailFileId = thumbnailFileId,
+                    thumbnailPath = initialThumbPath ?: existingByHash.thumbnailPath,
+                    status = "COMPLETED",
+                    completedAt = resolvedTs,
+                    width = if (existingByHash.width > 0) existingByHash.width else mediaWidth,
+                    height = if (existingByHash.height > 0) existingByHash.height else mediaHeight,
+                    duration = if (existingByHash.duration > 0) existingByHash.duration else mediaDuration
+                )
+                dao.update(updated)
+                if (thumbnailFileId != 0 && updated.thumbnailPath.isNullOrBlank()) {
+                    requestThumbnailDownload(context, thumbnailFileId)
+                }
+                return@withContext true
             }
-            return@withContext true
         }
 
         val cloudItem = TelegramBackupItem(
             localMediaId = 0L,
             uriString = null,
             filePath = null,
-            fileName = metadata.fileName,
+            fileName = resolvedName,
             mediaType = metadata.mediaType,
             sizeBytes = metadata.sizeBytes,
-            fileHash = metadata.fileHash,
+            fileHash = resolvedHash,
             telegramMessageId = message.id,
             telegramFileId = originalFileId,
             thumbnailFileId = thumbnailFileId,
-            thumbnailPath = null,
+            thumbnailPath = initialThumbPath,
             status = "COMPLETED",
-            dateModified = metadata.timestamp,
+            dateModified = resolvedTs,
             width = mediaWidth,
             height = mediaHeight,
             duration = mediaDuration,
-            queuedAt = metadata.timestamp,
-            completedAt = metadata.timestamp
+            queuedAt = resolvedTs,
+            completedAt = resolvedTs
         )
         dao.insert(cloudItem)
 
-        if (thumbnailFileId != 0) {
+        if (thumbnailFileId != 0 && initialThumbPath == null) {
             requestThumbnailDownload(context, thumbnailFileId)
         }
 
@@ -267,10 +370,26 @@ object TelegramSyncManager {
             try {
                 TelegramClientHolder.send(
                     context,
-                    TdApi.DownloadFile(fileId, 1, 0, 0, false)
+                    TdApi.DownloadFile(fileId, 32, 0, 0, false)
                 )
+                var downloadedPath: String? = null
+                repeat(12) {
+                    delay(300)
+                    val f = TelegramClientHolder.send(context, TdApi.GetFile(fileId))
+                    if (f.local?.isDownloadingCompleted == true && !f.local.path.isNullOrBlank()) {
+                        downloadedPath = f.local.path
+                        return@repeat
+                    }
+                }
+                if (!downloadedPath.isNullOrBlank()) {
+                    val dao = OdinDatabase.getInstance(context).telegramBackupDao()
+                    val matching = dao.getCompletedItems().firstOrNull { it.thumbnailFileId == fileId || it.telegramFileId == fileId }
+                    if (matching != null && matching.thumbnailPath != downloadedPath) {
+                        dao.updateThumbnailPath(matching.id, downloadedPath)
+                    }
+                }
             } catch (e: Exception) {
-                android.util.Log.w("TelegramSync", "Thumbnail download request failed for fileId=$fileId: ${e.message}")
+                Log.w("TelegramSync", "Thumbnail download request failed for fileId=$fileId: ${e.message}")
             }
         }
     }
@@ -295,7 +414,7 @@ object TelegramSyncManager {
                 val downloaded = withTimeoutOrNull(30_000L) {
                     var result: TdApi.File? = null
                     repeat(60) {
-                        kotlinx.coroutines.delay(500)
+                        delay(500)
                         val f = TelegramClientHolder.send(context, TdApi.GetFile(thumbnailFileId))
                         if (f.local?.isDownloadingCompleted == true && !f.local.path.isNullOrBlank()) {
                             result = f
@@ -311,7 +430,7 @@ object TelegramSyncManager {
                 }
                 path
             } catch (e: Exception) {
-                android.util.Log.w("TelegramSync", "ensureThumbnail failed: ${e.message}")
+                Log.w("TelegramSync", "ensureThumbnail failed: ${e.message}")
                 null
             }
         }

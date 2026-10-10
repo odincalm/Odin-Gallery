@@ -3,15 +3,18 @@ package com.example.telegram.worker
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.data.local.OdinDatabase
 import com.example.telegram.client.TelegramAuthManager
 import com.example.telegram.data.TelegramBackupPreferences
 import com.example.telegram.data.TelegramNetworkUtil
+import com.example.telegram.data.TelegramSyncManager
 import com.example.telegram.data.TelegramUploader
 import com.example.telegram.model.NetworkPreference
 import com.example.telegram.model.TelegramAuthState
@@ -19,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.TimeUnit
 
 class TelegramBackupWorker(
     private val context: Context,
@@ -55,6 +59,7 @@ class TelegramBackupWorker(
 
         val pendingItems = dao.getPendingItems()
         if (pendingItems.isEmpty()) {
+            TelegramSyncManager.syncWithCloud(context)
             return@withContext Result.success()
         }
 
@@ -124,6 +129,9 @@ class TelegramBackupWorker(
             )
         }
 
+        // Also sync cloud history to discover any new media added from other devices
+        TelegramSyncManager.syncWithCloud(context)
+
         if (hasFailures) {
             Result.retry()
         } else {
@@ -133,6 +141,7 @@ class TelegramBackupWorker(
 
     companion object {
         const val WORK_NAME = "odin_telegram_cloud_backup_work"
+        const val PERIODIC_WORK_NAME = "odin_telegram_cloud_periodic_sync"
 
         fun enqueueBackup(context: Context, replaceExisting: Boolean = false) {
             val prefs = TelegramBackupPreferences(context)
@@ -160,11 +169,40 @@ class TelegramBackupWorker(
                 policy,
                 workRequest
             )
+
+            enqueuePeriodicSync(context)
+        }
+
+        fun enqueuePeriodicSync(context: Context) {
+            val prefs = TelegramBackupPreferences(context)
+            if (!prefs.isBackupEnabled.value) return
+
+            val netPref = prefs.networkPreference.value
+            val networkType = when (netPref) {
+                NetworkPreference.WIFI_ONLY -> NetworkType.UNMETERED
+                NetworkPreference.MOBILE_DATA -> NetworkType.CONNECTED
+                NetworkPreference.WIFI_AND_MOBILE -> NetworkType.CONNECTED
+            }
+
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(networkType)
+                .build()
+
+            val periodicWorkRequest = PeriodicWorkRequestBuilder<TelegramBackupWorker>(
+                12, TimeUnit.HOURS
+            ).setConstraints(constraints).build()
+
+            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                PERIODIC_WORK_NAME,
+                ExistingPeriodicWorkPolicy.KEEP,
+                periodicWorkRequest
+            )
         }
 
         fun cancelBackup(context: Context) {
             try {
                 WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
+                WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_WORK_NAME)
             } catch (e: Exception) {
                 // Ignore
             }

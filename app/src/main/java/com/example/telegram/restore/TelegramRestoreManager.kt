@@ -5,11 +5,15 @@ import android.media.MediaScannerConnection
 import android.os.Environment
 import com.example.data.local.OdinDatabase
 import com.example.data.local.TelegramBackupItem
+import com.example.model.MediaItem
 import com.example.telegram.client.TelegramClientHolder
 import com.example.telegram.client.TelegramSavedMessagesHelper
+import com.example.telegram.data.TelegramSyncManager
+import com.example.telegram.model.CloudBackupMetadata
 import com.example.telegram.model.DiscoveredCloudItem
 import io.github.tdlibandroid.ktx.trackFile
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -33,37 +37,87 @@ object TelegramRestoreManager {
 
     suspend fun restoreItem(context: Context, item: DiscoveredCloudItem): Result<File> = withContext(Dispatchers.IO) {
         try {
-            if (item.telegramFileId == 0) {
+            var fileId = item.telegramFileId
+            val msgId = item.messageId
+
+            if ((fileId == 0) && msgId > 0L) {
+                val resolved = TelegramSyncManager.resolveRemoteMessage(context, msgId)
+                if (resolved != null) {
+                    fileId = resolved.first
+                }
+            }
+
+            if (fileId == 0) {
                 return@withContext Result.failure(IllegalStateException("Invalid Telegram file ID for ${item.metadata.fileName}"))
             }
 
-            val client = TelegramClientHolder.getClient(context)
-
-            // Check if TDLib already has the file downloaded locally
-            val existingFile = try {
-                TelegramClientHolder.send(context, TdApi.GetFile(item.telegramFileId))
+            val client = try {
+                TelegramClientHolder.getClient(context)
             } catch (e: Exception) {
                 null
+            }
+
+            var existingFile = try {
+                TelegramClientHolder.send(context, TdApi.GetFile(fileId))
+            } catch (e: Exception) {
+                null
+            }
+
+            if ((existingFile == null || existingFile.id == 0) && msgId > 0L) {
+                val resolved = TelegramSyncManager.resolveRemoteMessage(context, msgId)
+                if (resolved != null) {
+                    fileId = resolved.first
+                    existingFile = try {
+                        TelegramClientHolder.send(context, TdApi.GetFile(fileId))
+                    } catch (e: Exception) {
+                        null
+                    }
+                }
             }
 
             val sourcePath = if (existingFile?.local?.isDownloadingCompleted == true && !existingFile.local.path.isNullOrBlank()) {
                 existingFile.local.path
             } else {
-                // Start downloading the original file in TDLib
                 TelegramClientHolder.send(
                     context,
-                    TdApi.DownloadFile(item.telegramFileId, 32, 0L, 0L, false)
+                    TdApi.DownloadFile(fileId, 32, 0L, 0L, false)
                 )
 
-                // Track download until completed with a 90-second timeout
-                val downloadedFile = withTimeoutOrNull(90_000L) {
-                    client.trackFile(item.telegramFileId).firstOrNull { file ->
-                        file.local?.isDownloadingCompleted == true && !file.local.path.isNullOrBlank()
-                    }
-                } ?: return@withContext Result.failure(IllegalStateException("Failed to download media file from Telegram"))
+                var downloadedPath: String? = null
 
-                downloadedFile.local?.path
-                    ?: return@withContext Result.failure(IllegalStateException("Downloaded file path missing"))
+                if (client != null) {
+                    try {
+                        val flowResult = withTimeoutOrNull(90_000L) {
+                            client.trackFile(fileId).firstOrNull { file ->
+                                file.local?.isDownloadingCompleted == true && !file.local.path.isNullOrBlank()
+                            }
+                        }
+                        downloadedPath = flowResult?.local?.path
+                    } catch (e: Exception) {
+                        // Fallback to polling
+                    }
+                }
+
+                if (downloadedPath.isNullOrBlank()) {
+                    downloadedPath = withTimeoutOrNull(90_000L) {
+                        var path: String? = null
+                        repeat(180) {
+                            delay(500)
+                            val f = try {
+                                TelegramClientHolder.send(context, TdApi.GetFile(fileId))
+                            } catch (e: Exception) {
+                                null
+                            }
+                            if (f?.local?.isDownloadingCompleted == true && !f.local.path.isNullOrBlank()) {
+                                path = f.local.path
+                                return@withTimeoutOrNull path
+                            }
+                        }
+                        path
+                    }
+                }
+
+                downloadedPath ?: return@withContext Result.failure(IllegalStateException("Failed to download media file from Telegram"))
             }
 
             val sourceFile = File(sourcePath)
@@ -71,7 +125,6 @@ object TelegramRestoreManager {
                 return@withContext Result.failure(IllegalStateException("Downloaded file does not exist on disk"))
             }
 
-            // Target destination directory: Pictures/OdinGallery or Movies/OdinGallery
             val isVideo = item.metadata.mediaType == "VIDEO"
             val targetFolder = if (isVideo) {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES)
@@ -87,14 +140,12 @@ object TelegramRestoreManager {
                 destFile = File(odinDir, "${nameWithoutExt}_restored_${System.currentTimeMillis()}.$ext")
             }
 
-            // Copy file content
             FileInputStream(sourceFile).use { input ->
                 FileOutputStream(destFile).use { output ->
                     input.copyTo(output)
                 }
             }
 
-            // Scan file with MediaScanner so Android Gallery indexes it immediately
             MediaScannerConnection.scanFile(
                 context,
                 arrayOf(destFile.absolutePath),
@@ -102,7 +153,6 @@ object TelegramRestoreManager {
                 null
             )
 
-            // Save record in local database
             val database = OdinDatabase.getInstance(context)
             val dao = database.telegramBackupDao()
             dao.insert(
@@ -115,7 +165,7 @@ object TelegramRestoreManager {
                     sizeBytes = item.metadata.sizeBytes,
                     fileHash = item.metadata.fileHash,
                     telegramMessageId = item.messageId,
-                    telegramFileId = item.telegramFileId,
+                    telegramFileId = fileId,
                     status = "COMPLETED",
                     completedAt = System.currentTimeMillis()
                 )
@@ -127,15 +177,25 @@ object TelegramRestoreManager {
         }
     }
 
-    suspend fun restoreMediaItem(context: Context, mediaItem: com.example.model.MediaItem): Result<File> = withContext(Dispatchers.IO) {
-        val fileId = mediaItem.cloudFileId
-            ?: return@withContext Result.failure(IllegalStateException("Item has no Telegram cloud file ID"))
+    suspend fun restoreMediaItem(context: Context, mediaItem: MediaItem): Result<File> = withContext(Dispatchers.IO) {
         val msgId = mediaItem.cloudMessageId ?: 0L
+        var fileId = mediaItem.cloudFileId ?: 0
+
+        if (fileId == 0 && msgId > 0L) {
+            val resolved = TelegramSyncManager.resolveRemoteMessage(context, msgId)
+            if (resolved != null) {
+                fileId = resolved.first
+            }
+        }
+
+        if (fileId == 0 && msgId == 0L) {
+            return@withContext Result.failure(IllegalStateException("Item has no Telegram cloud file ID or message ID"))
+        }
 
         val item = DiscoveredCloudItem(
             messageId = msgId,
             telegramFileId = fileId,
-            metadata = com.example.telegram.model.CloudBackupMetadata(
+            metadata = CloudBackupMetadata(
                 fileName = mediaItem.displayName,
                 mediaType = if (mediaItem.isVideo) "VIDEO" else "IMAGE",
                 sizeBytes = mediaItem.size,

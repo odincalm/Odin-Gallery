@@ -67,49 +67,72 @@ object TelegramSavedMessagesHelper {
         )
     }
 
-    suspend fun discoverBackups(context: Context, limit: Int = 100): List<DiscoveredCloudItem> {
+    suspend fun discoverBackups(context: Context): List<DiscoveredCloudItem> {
         val chatId = getSavedMessagesChatId(context)
-        val found = TelegramClientHolder.send(
-            context,
-            TdApi.SearchChatMessages(
-                chatId,
-                null, // topicId
-                TAG_PREFIX,
-                null, // senderId
-                0L,   // fromMessageId
-                0,    // offset
-                limit,
-                null  // filter
-            )
-        )
-
         val discovered = mutableListOf<DiscoveredCloudItem>()
-        for (message in found.messages) {
-            var captionText: String? = null
-            var fileId = 0
+        var fromMessageId = 0L
+        var hasMore = true
+        val batchSize = 100
 
-            when (val content = message.content) {
-                is TdApi.MessagePhoto -> {
-                    captionText = content.caption?.text
-                    val largestSize = content.photo?.sizes?.maxByOrNull { it.width * it.height }
-                    fileId = largestSize?.photo?.id ?: 0
+        while (hasMore) {
+            val found = try {
+                TelegramClientHolder.sendWithTimeout(
+                    context,
+                    TdApi.SearchChatMessages(
+                        chatId,
+                        null,
+                        TAG_PREFIX,
+                        null,
+                        fromMessageId,
+                        0,
+                        batchSize,
+                        null
+                    ),
+                    15_000L
+                )
+            } catch (e: Exception) {
+                break
+            }
+
+            if (found.messages.isEmpty()) {
+                hasMore = false
+                break
+            }
+
+            for (message in found.messages) {
+                var captionText: String? = null
+                var fileId = 0
+
+                when (val content = message.content) {
+                    is TdApi.MessagePhoto -> {
+                        captionText = content.caption?.text
+                        val largestSize = content.photo?.sizes?.maxByOrNull { it.width * it.height }
+                        fileId = largestSize?.photo?.id ?: 0
+                    }
+                    is TdApi.MessageVideo -> {
+                        captionText = content.caption?.text
+                        fileId = content.video?.video?.id ?: 0
+                    }
                 }
-                is TdApi.MessageVideo -> {
-                    captionText = content.caption?.text
-                    fileId = content.video?.video?.id ?: 0
+
+                val metadata = parseBackupCaption(captionText)
+                if (metadata != null && fileId != 0) {
+                    discovered.add(
+                        DiscoveredCloudItem(
+                            messageId = message.id,
+                            telegramFileId = fileId,
+                            metadata = metadata,
+                            telegramDate = message.date
+                        )
+                    )
                 }
             }
 
-            val metadata = parseBackupCaption(captionText)
-            if (metadata != null && fileId != 0) {
-                discovered.add(
-                    DiscoveredCloudItem(
-                        messageId = message.id,
-                        telegramFileId = fileId,
-                        metadata = metadata,
-                        telegramDate = message.date
-                    )
-                )
+            val lastMsg = found.messages.lastOrNull()
+            if (lastMsg != null && lastMsg.id != fromMessageId) {
+                fromMessageId = lastMsg.id
+            } else {
+                hasMore = false
             }
         }
         return discovered

@@ -113,7 +113,7 @@ object TelegramSyncManager {
 
                 var fromMessageId = 0L
                 var hasMore = true
-                val batchSize = 50
+                val batchSize = 100
 
                 while (hasMore) {
                     val searchResult = try {

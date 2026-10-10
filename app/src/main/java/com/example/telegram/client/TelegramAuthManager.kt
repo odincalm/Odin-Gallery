@@ -1,6 +1,7 @@
 package com.example.telegram.client
 
 import android.content.Context
+import com.example.telegram.data.TelegramSyncManager
 import com.example.telegram.model.TelegramAuthState
 import com.example.telegram.model.TelegramUser
 import kotlinx.coroutines.CoroutineScope
@@ -11,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
 
@@ -87,6 +89,8 @@ object TelegramAuthManager {
                         phoneNumber = me.phoneNumber
                     )
                     _authState.value = TelegramAuthState.Ready(user)
+                    TelegramSyncManager.init(context)
+                    TelegramSyncManager.syncWithCloud(context)
                 } catch (e: Exception) {
                     _authState.value = TelegramAuthState.Error(e.message ?: "Failed to retrieve Telegram profile")
                 }
@@ -106,8 +110,8 @@ object TelegramAuthManager {
         }
     }
 
-    suspend fun sendPhoneNumber(context: Context, phoneNumber: String): Result<Unit> {
-        return try {
+    suspend fun sendPhoneNumber(context: Context, phoneNumber: String): Result<Unit> = withContext(Dispatchers.IO) {
+        return@withContext try {
             currentPhoneNumber = phoneNumber.trim()
             _authState.value = TelegramAuthState.Connecting
             TelegramClientHolder.sendWithTimeout(
@@ -121,15 +125,15 @@ object TelegramAuthManager {
                 handleAuthorizationState(context, state)
             }
             Result.success(Unit)
-        } catch (e: Exception) {
-            val safeMessage = formatSafeError(e.message)
+        } catch (t: Throwable) {
+            val safeMessage = formatSafeError(t.message)
             _authState.value = TelegramAuthState.Error(safeMessage)
             Result.failure(Exception(safeMessage))
         }
     }
 
-    suspend fun sendCode(context: Context, code: String): Result<Unit> {
-        return try {
+    suspend fun sendCode(context: Context, code: String): Result<Unit> = withContext(Dispatchers.IO) {
+        return@withContext try {
             _authState.value = TelegramAuthState.Connecting
             TelegramClientHolder.sendWithTimeout(
                 context,
@@ -141,15 +145,15 @@ object TelegramAuthManager {
                 handleAuthorizationState(context, state)
             }
             Result.success(Unit)
-        } catch (e: Exception) {
-            val safeMessage = formatSafeError(e.message)
+        } catch (t: Throwable) {
+            val safeMessage = formatSafeError(t.message)
             _authState.value = TelegramAuthState.Error(safeMessage)
             Result.failure(Exception(safeMessage))
         }
     }
 
-    suspend fun sendPassword(context: Context, password: String): Result<Unit> {
-        return try {
+    suspend fun sendPassword(context: Context, password: String): Result<Unit> = withContext(Dispatchers.IO) {
+        return@withContext try {
             _authState.value = TelegramAuthState.Connecting
             TelegramClientHolder.sendWithTimeout(
                 context,
@@ -161,25 +165,25 @@ object TelegramAuthManager {
                 handleAuthorizationState(context, state)
             }
             Result.success(Unit)
-        } catch (e: Exception) {
-            val safeMessage = formatSafeError(e.message)
+        } catch (t: Throwable) {
+            val safeMessage = formatSafeError(t.message)
             _authState.value = TelegramAuthState.Error(safeMessage)
             Result.failure(Exception(safeMessage))
         }
     }
 
-    suspend fun logOut(context: Context): Result<Unit> {
-        return try {
+    suspend fun logOut(context: Context): Result<Unit> = withContext(Dispatchers.IO) {
+        return@withContext try {
             _authState.value = TelegramAuthState.LoggingOut
             TelegramClientHolder.sendWithTimeout(context, TdApi.LogOut(), 15_000L)
             TelegramSavedMessagesHelper.clearCachedChatId()
             _authState.value = TelegramAuthState.Uninitialized
             Result.success(Unit)
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             TelegramSavedMessagesHelper.clearCachedChatId()
             TelegramClientHolder.closeClient()
             _authState.value = TelegramAuthState.Uninitialized
-            Result.failure(e)
+            Result.failure(t)
         }
     }
 

@@ -57,12 +57,14 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -86,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem as ExoMediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -96,6 +99,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.R
 import com.example.model.MediaItem
+import com.example.telegram.restore.TelegramRestoreManager
 import com.example.ui.components.GlassIconButton
 import com.example.ui.components.GlassSurface
 import com.example.ui.components.ZoomableBox
@@ -104,8 +108,10 @@ import com.example.ui.theme.OdinColors
 import com.example.ui.theme.OdinShapes
 import com.example.ui.theme.OdinTypography
 import com.example.ui.viewmodel.GalleryViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -139,6 +145,17 @@ fun MediaViewerScreen(
     var is16_9Mode by remember { mutableStateOf(false) }
 
     val currentItem = mediaList.getOrNull(pagerState.currentPage) ?: mediaList.first()
+
+    // Automatically trigger full media download when viewing a cloud-only item
+    LaunchedEffect(currentItem.id, currentItem.isCloudOnly) {
+        if (currentItem.isCloudOnly && currentItem.cloudFileId != null) {
+            withContext(Dispatchers.IO) {
+                try {
+                    TelegramRestoreManager.restoreMediaItem(context, currentItem)
+                } catch (ignored: Exception) {}
+            }
+        }
+    }
 
     // Restore orientation when leaving viewer
     DisposableEffect(Unit) {
@@ -207,7 +224,7 @@ fun MediaViewerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black) // Pure OLED Black
+            .background(Color.Black)
     ) {
         // Fullscreen Horizontal Pager with edge-to-edge media
         HorizontalPager(
@@ -318,9 +335,8 @@ fun MediaViewerScreen(
                         )
                     }
 
-                    // Top Right Action Buttons: Aspect Ratio, Fullscreen/Rotate & Info
+                    // Top Right Action Buttons
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Aspect Ratio Toggle (16:9 vs Default 9:16)
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -341,7 +357,6 @@ fun MediaViewerScreen(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // Fullscreen / Orientation toggle
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -359,7 +374,6 @@ fun MediaViewerScreen(
 
                         Spacer(modifier = Modifier.width(4.dp))
 
-                        // Info / Details Button
                         Box(
                             modifier = Modifier
                                 .size(36.dp)
@@ -437,15 +451,18 @@ fun MediaViewerScreen(
             }
         }
 
-        // Metadata Modal Bottom Sheet
+        // Metadata Modal Bottom Sheet with AI Analysis
         if (showInfoSheet) {
             ModalBottomSheet(
-                onDismissRequest = { showInfoSheet = false },
+                onDismissRequest = {
+                    viewModel.clearAiDescription()
+                    showInfoSheet = false
+                },
                 sheetState = rememberModalBottomSheetState(),
                 containerColor = OdinColors.DarkSecondaryBackground,
                 shape = OdinShapes.bottomSheet
             ) {
-                MediaMetadataContent(item = currentItem)
+                MediaMetadataContent(item = currentItem, viewModel = viewModel)
             }
         }
     }
@@ -510,8 +527,6 @@ private fun VideoPlayerPage(
     val context = LocalContext.current
 
     if (!isActive) {
-        // Inactive video page: Release player to guarantee only 1 player instance exists!
-        // Display lightweight thumbnail with play indicator
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -543,7 +558,6 @@ private fun VideoPlayerPage(
                 )
             }
 
-            // Minimal play badge
             GlassSurface(
                 modifier = Modifier.size(56.dp),
                 shape = CircleShape,
@@ -562,7 +576,6 @@ private fun VideoPlayerPage(
         return
     }
 
-    // ACTIVE VIDEO PLAYER
     var isPlaying by remember { mutableStateOf(true) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var totalDurationMs by remember { mutableLongStateOf(item.duration) }
@@ -593,7 +606,6 @@ private fun VideoPlayerPage(
         onPlayingStateChanged(true)
     }
 
-    // Auto-progress tracker
     LaunchedEffect(exoPlayer, isPlaying) {
         while (isPlaying) {
             currentPositionMs = exoPlayer.currentPosition
@@ -650,7 +662,6 @@ private fun VideoPlayerPage(
             )
         }
 
-        // Subtle Liquid Glass Video Controls Overlay
         AnimatedVisibility(
             visible = showControls,
             enter = fadeIn(OdinAnimations.springFast),
@@ -660,13 +671,11 @@ private fun VideoPlayerPage(
                 .padding(bottom = 80.dp)
         ) {
             Box(modifier = Modifier.fillMaxSize()) {
-                // Center floating controls (Prev, 10s rewind, play/pause, 10s fwd, Next)
                 Row(
                     modifier = Modifier.align(Alignment.Center),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Previous Video
                     GlassIconButton(
                         icon = Icons.Default.SkipPrevious,
                         contentDescription = "Previous Video",
@@ -680,7 +689,6 @@ private fun VideoPlayerPage(
                         }
                     )
 
-                    // Rewind 10s
                     GlassIconButton(
                         icon = Icons.Default.Replay10,
                         contentDescription = "Rewind 10s",
@@ -694,7 +702,6 @@ private fun VideoPlayerPage(
                         }
                     )
 
-                    // Play / Pause Glass Pod
                     GlassIconButton(
                         icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
@@ -713,7 +720,6 @@ private fun VideoPlayerPage(
                         }
                     )
 
-                    // Forward 10s
                     GlassIconButton(
                         icon = Icons.Default.Forward10,
                         contentDescription = "Forward 10s",
@@ -727,7 +733,6 @@ private fun VideoPlayerPage(
                         }
                     )
 
-                    // Next Video
                     GlassIconButton(
                         icon = Icons.Default.SkipNext,
                         contentDescription = "Next Video",
@@ -742,7 +747,6 @@ private fun VideoPlayerPage(
                     )
                 }
 
-                // Bottom Liquid Glass Seekbar & Info
                 GlassSurface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -789,7 +793,6 @@ private fun VideoPlayerPage(
                             )
 
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // Speed cycle
                                 Text(
                                     text = "${playbackSpeed}x",
                                     style = OdinTypography.caption,
@@ -814,7 +817,6 @@ private fun VideoPlayerPage(
 
                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                // Mute toggle
                                 Icon(
                                     imageVector = if (isMuted) Icons.Default.VolumeMute else Icons.Default.VolumeUp,
                                     contentDescription = if (isMuted) "Unmute" else "Mute",
@@ -837,7 +839,12 @@ private fun VideoPlayerPage(
 }
 
 @Composable
-private fun MediaMetadataContent(item: MediaItem) {
+private fun MediaMetadataContent(item: MediaItem, viewModel: GalleryViewModel) {
+    val context = LocalContext.current
+    val aiDescription by viewModel.aiDescriptionText.collectAsStateWithLifecycle()
+    val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
+    val aiError by viewModel.aiError.collectAsStateWithLifecycle()
+
     val dateTaken = remember(item.dateAdded) {
         val time = if (item.dateAdded > 10_000_000_000L) item.dateAdded else item.dateAdded * 1000L
         SimpleDateFormat("EEEE, MMMM d, yyyy • h:mm a", Locale.getDefault()).format(Date(time))
@@ -872,6 +879,84 @@ private fun MediaMetadataContent(item: MediaItem) {
 
         if (!item.relativePath.isNullOrEmpty()) {
             MetadataRow(label = "Path", value = item.relativePath)
+        }
+
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // AI Analysis Container
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF2C2C2E))
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = OdinColors.DarkAccentBlue,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Gemini AI Analysis",
+                        style = OdinTypography.headline,
+                        color = Color.White
+                    )
+                }
+
+                if (!isAiLoading && aiDescription == null) {
+                    TextButton(
+                        onClick = { viewModel.describeCurrentMediaItem(context, item) }
+                    ) {
+                        Text("Analyze", color = OdinColors.DarkAccentBlue)
+                    }
+                }
+            }
+
+            if (isAiLoading) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = OdinColors.DarkAccentBlue
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = "Analyzing media with Gemini AI...",
+                        style = OdinTypography.footnote,
+                        color = OdinColors.DarkSecondaryText
+                    )
+                }
+            } else if (aiDescription != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = aiDescription!!,
+                    style = OdinTypography.body,
+                    color = Color.White,
+                    lineHeight = 22.sp
+                )
+            } else if (aiError != null) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    text = aiError!!,
+                    style = OdinTypography.footnote,
+                    color = OdinColors.DarkDestructive
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = { viewModel.describeCurrentMediaItem(context, item) }
+                ) {
+                    Text("Try Again", color = OdinColors.DarkAccentBlue)
+                }
+            }
         }
 
         Spacer(modifier = Modifier.height(28.dp))

@@ -134,9 +134,9 @@ object OdinShapes {
 }
 
 object OdinAnimations {
-    val springFast = spring<Float>(dampingRatio = 0.8f, stiffness = Spring.StiffnessMedium)
-    val springNormal = spring<Float>(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
-    val springSlow = spring<Float>(dampingRatio = 0.85f, stiffness = Spring.StiffnessLow)
+    val springFast = spring<Float>(dampingRatio = 0.75f, stiffness = Spring.StiffnessHigh)
+    val springNormal = spring<Float>(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
+    val springSlow = spring<Float>(dampingRatio = 0.80f, stiffness = Spring.StiffnessLow)
 
-    val springOffset = spring<IntOffset>(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow)
+    val springOffset = spring<IntOffset>(dampingRatio = 0.78f, stiffness = Spring.StiffnessMedium)
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.IntentSender
 import android.net.Uri
 import coil.Coil
+import java.io.File
 import com.example.data.local.AlbumEntity
 import com.example.data.local.AlbumMediaEntity
 import com.example.data.local.DeletedMediaEntity
@@ -117,22 +118,97 @@ class MediaRepository(private val context: Context) {
         }
     }
 
-    // Filtered media: raw media MINUS recently deleted and MINUS hidden media
+    // Filtered media: raw media MINUS recently deleted and MINUS hidden media, PLUS cloud-only items
     val activeMediaFlow: Flow<List<MediaItem>> = combine(
         _rawMediaFlow,
         favoriteDao.getAllFavorites(),
         deletedMediaDao.getAllDeleted(),
-        hiddenMediaDao.getAllHidden()
-    ) { rawItems, favorites, deletedItems, hiddenItems ->
+        hiddenMediaDao.getAllHidden(),
+        db.telegramBackupDao().getAllCompletedFlow()
+    ) { rawItems, favorites, deletedItems, hiddenItems, completedBackups ->
         val favoriteIds = favorites.map { it.originalMediaId }.toSet()
         val deletedIds = deletedItems.map { it.originalMediaId }.toSet()
         val hiddenIds = hiddenItems.map { it.originalMediaId }.toSet()
 
-        rawItems
-            .filterNot { it.id in deletedIds || it.id in hiddenIds }
-            .map { item ->
-                item.copy(isFavorite = item.id in favoriteIds, isHidden = false)
+        val completedByMediaId = completedBackups.filter { it.localMediaId > 0 }.associateBy { it.localMediaId }
+        val completedByHash = completedBackups.filter { it.fileHash.isNotBlank() }.associateBy { it.fileHash }
+
+        val localScannedIds = mutableSetOf<Long>()
+        val resultList = mutableListOf<MediaItem>()
+
+        // 1. Process local scanned media
+        for (item in rawItems) {
+            if (item.id in deletedIds || item.id in hiddenIds) continue
+            localScannedIds.add(item.id)
+
+            val backupInfo = completedByMediaId[item.id] ?: (if (item.cloudFileHash != null) completedByHash[item.cloudFileHash] else null)
+            val isFav = item.id in favoriteIds
+
+            val updatedItem = if (backupInfo != null) {
+                item.copy(
+                    isFavorite = isFav,
+                    isHidden = false,
+                    isCloudSynced = true,
+                    cloudMessageId = backupInfo.telegramMessageId,
+                    cloudFileId = backupInfo.telegramFileId,
+                    cloudThumbnailPath = backupInfo.thumbnailPath ?: item.cloudThumbnailPath,
+                    cloudFileHash = backupInfo.fileHash
+                )
+            } else {
+                item.copy(isFavorite = isFav, isHidden = false)
             }
+            resultList.add(updatedItem)
+        }
+
+        // 2. Add cloud-only media (backed up from other devices or missing locally)
+        val deletedHashesOrNames = deletedItems.map { "${it.displayName}_${it.size}" }.toSet()
+
+        for (backup in completedBackups) {
+            // Do not expose cloud items if they were locally deleted or hidden by the user
+            if (backup.localMediaId in deletedIds || backup.localMediaId in hiddenIds) continue
+            val deletedKey = "${backup.fileName}_${backup.sizeBytes}"
+            if (deletedKey in deletedHashesOrNames) continue
+
+            val isLocalPresent = backup.localMediaId > 0 && backup.localMediaId in localScannedIds
+            val isLocalHashPresent = backup.fileHash.isNotBlank() && resultList.any { it.cloudFileHash == backup.fileHash }
+
+            if (!isLocalPresent && !isLocalHashPresent) {
+                val cloudOnlyId = -100_000L - backup.id
+                val mediaFile = backup.filePath?.let { File(it) }
+                val thumbnailFile = backup.thumbnailPath?.let { File(it) }
+
+                val usableUri = when {
+                    mediaFile != null && mediaFile.exists() -> Uri.fromFile(mediaFile)
+                    thumbnailFile != null && thumbnailFile.exists() -> Uri.fromFile(thumbnailFile)
+                    else -> Uri.parse("content://odin.cloud.media/${backup.id}")
+                }
+
+                val cloudItem = MediaItem(
+                    id = cloudOnlyId,
+                    uri = usableUri,
+                    displayName = backup.fileName,
+                    mimeType = if (backup.mediaType == "VIDEO") "video/*" else "image/*",
+                    dateAdded = backup.dateModified,
+                    dateModified = backup.dateModified,
+                    size = backup.sizeBytes,
+                    width = backup.width,
+                    height = backup.height,
+                    duration = backup.duration,
+                    isVideo = backup.mediaType == "VIDEO",
+                    isFavorite = false,
+                    isHidden = false,
+                    isCloudOnly = true,
+                    isCloudSynced = true,
+                    cloudMessageId = backup.telegramMessageId,
+                    cloudFileId = backup.telegramFileId,
+                    cloudThumbnailPath = backup.thumbnailPath,
+                    cloudFileHash = backup.fileHash
+                )
+                resultList.add(cloudItem)
+            }
+        }
+
+        resultList.sortedByDescending { it.dateModified }
     }.flowOn(Dispatchers.Default)
 
     // Hidden media flow (accessible strictly in the Hidden vault)
@@ -400,6 +476,18 @@ class MediaRepository(private val context: Context) {
             )
         )
 
+        // 11. Telegram Cloud Backup
+        val cloudItems = activeList.filter { it.isCloudSynced || it.isCloudOnly }
+        list.add(
+            AlbumItem(
+                id = -11L,
+                title = "Telegram Cloud",
+                count = cloudItems.size,
+                coverUri = cloudItems.firstOrNull()?.uri,
+                systemType = SystemAlbumType.TELEGRAM_CLOUD
+            )
+        )
+
         // Custom User Albums
         for (custom in customAlbums) {
             val mediaIds = allCrossRefs.filter { it.albumId == custom.id }.map { it.mediaId }.toSet()
@@ -434,6 +522,7 @@ class MediaRepository(private val context: Context) {
                 }
                 SystemAlbumType.HIDDEN -> hiddenList
                 SystemAlbumType.RECENTLY_DELETED -> emptyList()
+                SystemAlbumType.TELEGRAM_CLOUD -> activeList.filter { it.isCloudSynced || it.isCloudOnly }
                 null -> {
                     val ids = crossRefs.map { it.mediaId }.toSet()
                     activeList.filter { it.id in ids }

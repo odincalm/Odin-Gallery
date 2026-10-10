@@ -7,8 +7,18 @@ import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.util.DebugLogger
+import com.example.telegram.data.TelegramSyncManager
 
 class OdinApplication : Application(), ImageLoaderFactory {
+
+    override fun onCreate() {
+        super.onCreate()
+        try {
+            TelegramSyncManager.init(this)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     override fun newImageLoader(): ImageLoader {
         return ImageLoader.Builder(this)

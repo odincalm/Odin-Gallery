@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
@@ -201,8 +202,36 @@ interface TelegramBackupDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(item: TelegramBackupItem): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertBatch(items: List<TelegramBackupItem>)
+    @Transaction
+    suspend fun insertBatch(items: List<TelegramBackupItem>) {
+        for (item in items) {
+            val existing = if (item.telegramMessageId > 0L) {
+                getItemByMessageId(item.telegramMessageId)
+            } else if (item.fileHash.isNotBlank()) {
+                getItemByHash(item.fileHash)
+            } else if (item.localMediaId > 0L) {
+                getItemByMediaId(item.localMediaId)
+            } else {
+                null
+            }
+
+            if (existing != null) {
+                update(existing.copy(
+                    telegramMessageId = if (item.telegramMessageId > 0L) item.telegramMessageId else existing.telegramMessageId,
+                    telegramFileId = if (item.telegramFileId != 0) item.telegramFileId else existing.telegramFileId,
+                    thumbnailFileId = if (item.thumbnailFileId != 0) item.thumbnailFileId else existing.thumbnailFileId,
+                    thumbnailPath = item.thumbnailPath ?: existing.thumbnailPath,
+                    status = item.status,
+                    completedAt = item.completedAt ?: existing.completedAt,
+                    width = if (item.width > 0) item.width else existing.width,
+                    height = if (item.height > 0) item.height else existing.height,
+                    duration = if (item.duration > 0) item.duration else existing.duration
+                ))
+            } else {
+                insert(item)
+            }
+        }
+    }
 
     @Update
     suspend fun update(item: TelegramBackupItem)

@@ -3,6 +3,7 @@ package com.example.ui.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.repository.MediaStoreScanner
 import com.example.model.MediaItem
 import com.example.telegram.client.TelegramAuthManager
 import com.example.telegram.client.TelegramClientHolder
@@ -79,7 +80,6 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
     val restoreProgress: StateFlow<Pair<Int, Int>> = _restoreProgress.asStateFlow()
 
     init {
-        // Initialize client and update observation
         try {
             TelegramAuthManager.init(context)
         } catch (ignored: Throwable) {}
@@ -92,33 +92,62 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
     fun sendPhoneNumber(phoneNumber: String) {
         viewModelScope.launch {
             _isActionLoading.value = true
-            TelegramAuthManager.sendPhoneNumber(context, phoneNumber)
-            _isActionLoading.value = false
+            try {
+                val res = TelegramAuthManager.sendPhoneNumber(context, phoneNumber)
+                res.onFailure { error ->
+                    _userFeedbackMessage.value = error.message ?: "Failed to send phone number"
+                }
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = e.message ?: "An unexpected error occurred"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
     fun sendCode(code: String) {
         viewModelScope.launch {
             _isActionLoading.value = true
-            TelegramAuthManager.sendCode(context, code)
-            _isActionLoading.value = false
+            try {
+                val res = TelegramAuthManager.sendCode(context, code)
+                res.onFailure { error ->
+                    _userFeedbackMessage.value = error.message ?: "Verification failed"
+                }
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = e.message ?: "An unexpected error occurred"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
     fun sendPassword(password: String) {
         viewModelScope.launch {
             _isActionLoading.value = true
-            TelegramAuthManager.sendPassword(context, password)
-            _isActionLoading.value = false
+            try {
+                val res = TelegramAuthManager.sendPassword(context, password)
+                res.onFailure { error ->
+                    _userFeedbackMessage.value = error.message ?: "Password check failed"
+                }
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = e.message ?: "An unexpected error occurred"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
     fun logOut() {
         viewModelScope.launch {
             _isActionLoading.value = true
-            TelegramBackupWorker.cancelBackup(context)
-            TelegramAuthManager.logOut(context)
-            _isActionLoading.value = false
+            try {
+                TelegramBackupWorker.cancelBackup(context)
+                TelegramAuthManager.logOut(context)
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = e.message ?: "Logout failed"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
@@ -136,10 +165,21 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
         _userFeedbackMessage.value = null
     }
 
-    fun setBackupEnabled(enabled: Boolean) {
+    fun setBackupEnabled(enabled: Boolean, allMedia: List<MediaItem> = emptyList()) {
         preferences.setBackupEnabled(enabled)
         if (enabled) {
-            TelegramBackupWorker.enqueueBackup(context)
+            viewModelScope.launch {
+                if (preferences.backupExistingMedia.value) {
+                    val mediaList = if (allMedia.isNotEmpty()) {
+                        allMedia
+                    } else {
+                        val scanner = MediaStoreScanner(context)
+                        withContext(Dispatchers.IO) { scanner.queryAllMedia() }
+                    }
+                    repository.enqueueMediaItems(mediaList)
+                }
+                TelegramBackupWorker.enqueueBackup(context)
+            }
         } else {
             TelegramBackupWorker.cancelBackup(context)
         }
@@ -171,20 +211,30 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
     fun backupExistingMediaNow(allMedia: List<MediaItem>) {
         viewModelScope.launch {
             _isActionLoading.value = true
-            val count = repository.enqueueMediaItems(allMedia)
-            TelegramBackupWorker.enqueueBackup(context)
-            _userFeedbackMessage.value = "Enqueued $count items for Telegram backup"
-            _isActionLoading.value = false
+            try {
+                val count = repository.enqueueMediaItems(allMedia)
+                TelegramBackupWorker.enqueueBackup(context)
+                _userFeedbackMessage.value = "Enqueued $count items for Telegram backup"
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = "Failed to enqueue backup: ${e.message}"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
     fun retryFailedUploads() {
         viewModelScope.launch {
             _isActionLoading.value = true
-            val count = repository.retryFailed()
-            TelegramBackupWorker.enqueueBackup(context)
-            _userFeedbackMessage.value = "Retrying $count failed items"
-            _isActionLoading.value = false
+            try {
+                val count = repository.retryFailed()
+                TelegramBackupWorker.enqueueBackup(context)
+                _userFeedbackMessage.value = "Retrying $count failed items"
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = "Failed to retry: ${e.message}"
+            } finally {
+                _isActionLoading.value = false
+            }
         }
     }
 
@@ -192,26 +242,31 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch {
             _isTestingUpload.value = true
             _testUploadStatus.value = "Preparing test upload..."
-            val hash = TelegramFileUtil.computeSha256(context, item.uri)
-            _testUploadStatus.value = "Uploading to Saved Messages..."
-            val result = TelegramUploader.uploadMedia(
-                context = context,
-                uriString = item.uri.toString(),
-                fileName = item.displayName,
-                isVideo = item.isVideo,
-                sizeBytes = item.size,
-                fileHash = hash.ifBlank { "test_hash_${item.id}" }
-            )
-            result.fold(
-                onSuccess = { messageId ->
-                    _testUploadStatus.value = "Upload confirmed! Saved Messages ID #$messageId"
-                    preferences.updateLastBackupTime()
-                },
-                onFailure = { error ->
-                    _testUploadStatus.value = "Test upload failed: ${error.message}"
-                }
-            )
-            _isTestingUpload.value = false
+            try {
+                val hash = TelegramFileUtil.computeSha256(context, item.uri)
+                _testUploadStatus.value = "Uploading to Saved Messages..."
+                val result = TelegramUploader.uploadMedia(
+                    context = context,
+                    uriString = item.uri.toString(),
+                    fileName = item.displayName,
+                    isVideo = item.isVideo,
+                    sizeBytes = item.size,
+                    fileHash = hash.ifBlank { "test_hash_${item.id}" }
+                )
+                result.fold(
+                    onSuccess = { messageId ->
+                        _testUploadStatus.value = "Upload confirmed! Saved Messages ID #$messageId"
+                        preferences.updateLastBackupTime()
+                    },
+                    onFailure = { error ->
+                        _testUploadStatus.value = "Test upload failed: ${error.message}"
+                    }
+                )
+            } catch (e: Throwable) {
+                _testUploadStatus.value = "Test upload failed: ${e.message}"
+            } finally {
+                _isTestingUpload.value = false
+            }
         }
     }
 
@@ -248,21 +303,25 @@ class TelegramBackupViewModel(application: Application) : AndroidViewModel(appli
 
         viewModelScope.launch {
             _isRestoring.value = true
-            val total = itemsToRestore.size
-            var successCount = 0
+            try {
+                val total = itemsToRestore.size
+                var successCount = 0
 
-            for ((index, item) in itemsToRestore.withIndex()) {
-                _restoreProgress.value = (index + 1) to total
-                val result = TelegramRestoreManager.restoreItem(context, item)
-                if (result.isSuccess) {
-                    successCount++
+                for ((index, item) in itemsToRestore.withIndex()) {
+                    _restoreProgress.value = (index + 1) to total
+                    val result = TelegramRestoreManager.restoreItem(context, item)
+                    if (result.isSuccess) {
+                        successCount++
+                    }
                 }
-            }
 
-            _userFeedbackMessage.value = "Restored $successCount of $total items successfully!"
-            _isRestoring.value = false
-            // Refresh discovery list
-            discoverCloudBackups()
+                _userFeedbackMessage.value = "Restored $successCount of $total items successfully!"
+                discoverCloudBackups()
+            } catch (e: Throwable) {
+                _userFeedbackMessage.value = "Restore error: ${e.message}"
+            } finally {
+                _isRestoring.value = false
+            }
         }
     }
 

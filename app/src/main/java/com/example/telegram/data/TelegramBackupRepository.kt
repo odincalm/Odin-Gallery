@@ -50,31 +50,36 @@ class TelegramBackupRepository(private val context: Context) {
             // Content identity check via SHA-256
             val hash = TelegramFileUtil.computeSha256(context, item.uri)
             if (hash.isNotBlank()) {
-                val completedDuplicate = dao.getCompletedItemByHash(hash)
-                if (completedDuplicate != null) {
-                    // Already backed up under identical hash! Mark completed immediately without re-uploading
-                    dao.insert(
-                        TelegramBackupItem(
-                            localMediaId = item.id,
-                            uriString = item.uri.toString(),
-                            filePath = null,
-                            fileName = item.displayName,
-                            mediaType = if (item.isVideo) "VIDEO" else "IMAGE",
-                            sizeBytes = item.size,
-                            fileHash = hash,
-                            telegramMessageId = completedDuplicate.telegramMessageId,
-                            telegramFileId = completedDuplicate.telegramFileId,
-                            thumbnailFileId = completedDuplicate.thumbnailFileId,
-                            thumbnailPath = completedDuplicate.thumbnailPath,
-                            status = "COMPLETED",
-                            dateModified = item.dateModified,
-                            width = item.width,
-                            height = item.height,
-                            duration = item.duration,
-                            completedAt = System.currentTimeMillis()
+                val existingByHash = dao.getItemByHash(hash)
+                if (existingByHash != null) {
+                    if (existingByHash.status == "PENDING" || existingByHash.status == "UPLOADING") {
+                        continue
+                    }
+                    if (existingByHash.status == "COMPLETED") {
+                        // Already backed up under identical hash! Mark completed immediately without re-uploading
+                        dao.insert(
+                            TelegramBackupItem(
+                                localMediaId = item.id,
+                                uriString = item.uri.toString(),
+                                filePath = null,
+                                fileName = item.displayName,
+                                mediaType = if (item.isVideo) "VIDEO" else "IMAGE",
+                                sizeBytes = item.size,
+                                fileHash = hash,
+                                telegramMessageId = existingByHash.telegramMessageId,
+                                telegramFileId = existingByHash.telegramFileId,
+                                thumbnailFileId = existingByHash.thumbnailFileId,
+                                thumbnailPath = existingByHash.thumbnailPath,
+                                status = "COMPLETED",
+                                dateModified = item.dateModified,
+                                width = item.width,
+                                height = item.height,
+                                duration = item.duration,
+                                completedAt = System.currentTimeMillis()
+                            )
                         )
-                    )
-                    continue
+                        continue
+                    }
                 }
             }
 

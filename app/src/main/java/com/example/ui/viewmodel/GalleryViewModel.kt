@@ -8,12 +8,13 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.DeletedMediaEntity
-import com.example.data.local.UserPrefEntity
+import com.example.data.repository.AiRepository
 import com.example.data.repository.MediaRepository
 import com.example.data.repository.MediaStoreScanner
 import com.example.model.AlbumItem
 import com.example.model.MediaGroup
 import com.example.model.MediaItem
+import com.example.telegram.restore.TelegramRestoreManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,12 +26,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import java.security.MessageDigest
 import kotlin.coroutines.resume
 
 class GalleryViewModel(application: Application) : AndroidViewModel(application) {
 
     val repository = MediaRepository(application)
+    val aiRepository = AiRepository()
 
     private val _optimisticFavoriteIds = MutableStateFlow<Set<Long>>(emptySet())
 
@@ -115,6 +118,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     private val _infoSheetItem = MutableStateFlow<MediaItem?>(null)
     val infoSheetItem: StateFlow<MediaItem?> = _infoSheetItem.asStateFlow()
 
+    // AI state
+    private val _aiDescriptionText = MutableStateFlow<String?>(null)
+    val aiDescriptionText: StateFlow<String?> = _aiDescriptionText.asStateFlow()
+
+    private val _isAiLoading = MutableStateFlow(false)
+    val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
+
+    private val _aiError = MutableStateFlow<String?>(null)
+    val aiError: StateFlow<String?> = _aiError.asStateFlow()
+
     // Local Search state
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -163,6 +176,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun toggleFavorite(item: MediaItem) {
+        val newFav = !item.isFavorite
+
+        // 1. Instant UI update in optimistic IDs
         val currentToggled = _optimisticFavoriteIds.value.toMutableSet()
         if (currentToggled.contains(item.id)) {
             currentToggled.remove(item.id)
@@ -171,12 +187,43 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
         }
         _optimisticFavoriteIds.value = currentToggled
 
+        // 2. Patch current viewer list in the same frame
+        _viewerMediaList.value = _viewerMediaList.value.map {
+            if (it.id == item.id) it.copy(isFavorite = newFav) else it
+        }
+
+        // 3. Persist to Room in background and sync
         viewModelScope.launch {
             repository.toggleFavorite(item)
             val freshToggled = _optimisticFavoriteIds.value.toMutableSet()
             freshToggled.remove(item.id)
             _optimisticFavoriteIds.value = freshToggled
         }
+    }
+
+    fun describeCurrentMediaItem(context: Context, item: MediaItem) {
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            _aiError.value = null
+            _aiDescriptionText.value = null
+
+            val result = aiRepository.describeMediaItem(context, item)
+            result.fold(
+                onSuccess = { desc ->
+                    _aiDescriptionText.value = desc
+                },
+                onFailure = { error ->
+                    _aiError.value = error.message ?: "Failed to generate AI description."
+                }
+            )
+            _isAiLoading.value = false
+        }
+    }
+
+    fun clearAiDescription() {
+        _aiDescriptionText.value = null
+        _aiError.value = null
+        _isAiLoading.value = false
     }
 
     private var cachedPasswordHash: String? = null
@@ -400,7 +447,6 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             _showDeleteConfirm.value = false
             _pendingDeleteItems.value = emptyList()
             if (_isViewerOpen.value) {
-                // If viewer is viewing the deleted item, navigate or close
                 closeViewer()
             }
         }
@@ -582,22 +628,37 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
     // Sharing via Android Sharesheet
     fun shareMedia(context: Context, items: List<MediaItem>) {
         if (items.isEmpty()) return
-        if (items.size == 1) {
-            val item = items.first()
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = item.mimeType
-                putExtra(Intent.EXTRA_STREAM, item.uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        viewModelScope.launch {
+            val readyItems = items.map { item ->
+                if (item.isCloudOnly && item.cloudFileId != null) {
+                    val result = TelegramRestoreManager.restoreMediaItem(context, item)
+                    if (result.isSuccess) {
+                        val file = result.getOrNull()
+                        if (file != null && file.exists()) {
+                            item.copy(uri = Uri.fromFile(file))
+                        } else item
+                    } else item
+                } else item
             }
-            context.startActivity(Intent.createChooser(intent, "Share ${item.displayName}"))
-        } else {
-            val uris = ArrayList(items.map { it.uri })
-            val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
-                type = "*/*"
-                putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            withContext(Dispatchers.Main) {
+                if (readyItems.size == 1) {
+                    val item = readyItems.first()
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = item.mimeType
+                        putExtra(Intent.EXTRA_STREAM, item.uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share ${item.displayName}"))
+                } else {
+                    val uris = ArrayList(readyItems.map { it.uri })
+                    val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
+                        type = "*/*"
+                        putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share ${readyItems.size} items"))
+                }
             }
-            context.startActivity(Intent.createChooser(intent, "Share ${items.size} items"))
         }
     }
 }

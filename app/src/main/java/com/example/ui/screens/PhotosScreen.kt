@@ -33,11 +33,9 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.VisibilityOff
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -70,8 +68,6 @@ fun PhotosScreen(
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val isSelectionMode by viewModel.isSelectionMode.collectAsStateWithLifecycle()
     val selectedMediaIds by viewModel.selectedMediaIds.collectAsStateWithLifecycle()
-    val showDeleteConfirm by viewModel.showDeleteConfirm.collectAsStateWithLifecycle()
-    val pendingDeleteItems by viewModel.pendingDeleteItems.collectAsStateWithLifecycle()
     val showMoveDialog by viewModel.showMoveDialog.collectAsStateWithLifecycle()
     val albums by viewModel.albums.collectAsStateWithLifecycle()
 
@@ -87,7 +83,6 @@ fun PhotosScreen(
             .background(MaterialTheme.colorScheme.background)
     ) {
         if (activeMedia.isEmpty() && !isScanning) {
-            // Calm, minimal empty state
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -123,7 +118,7 @@ fun PhotosScreen(
                 verticalArrangement = Arrangement.spacedBy(OdinSpacing.gridGap),
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Header item: Large Title "Photos"
+                // Header item: Title "Photos"
                 item(
                     key = "header_photos_title",
                     span = { GridItemSpan(3) },
@@ -161,9 +156,9 @@ fun PhotosScreen(
                 }
 
                 // Natural Date Grouping
-                mediaGroups.forEach { group ->
+                mediaGroups.forEachIndexed { groupIndex, group ->
                     item(
-                        key = "header_${group.title}",
+                        key = "header_${group.title}_${group.dateSubtitle}_$groupIndex",
                         span = { GridItemSpan(3) },
                         contentType = "date_header"
                     ) {
@@ -189,7 +184,7 @@ fun PhotosScreen(
 
                     items(
                         items = group.items,
-                        key = { it.id },
+                        key = { "photo_${group.title}_${it.id}" },
                         contentType = { if (it.isVideo) "video" else "photo" }
                     ) { item ->
                         val isSelected = selectedMediaIds.contains(item.id)
@@ -281,7 +276,7 @@ fun PhotosScreen(
             }
         }
 
-        // Selection Mode Bottom Liquid Glass Bar (Move, Share, Delete)
+        // Selection Mode Bottom Bar
         AnimatedVisibility(
             visible = isSelectionMode,
             enter = slideInVertically(initialOffsetY = { it }, animationSpec = OdinAnimations.springOffset) + fadeIn(),
@@ -367,52 +362,6 @@ fun PhotosScreen(
                 onSelectAlbum = { albumId ->
                     viewModel.moveSelectedMediaToAlbum(albumId)
                 }
-            )
-        }
-
-        // Delete Confirmation Sheet/Dialog
-        if (showDeleteConfirm) {
-            AlertDialog(
-                onDismissRequest = { viewModel.dismissDeleteDialog() },
-                title = {
-                    Text(
-                        text = stringResource(id = R.string.delete),
-                        style = OdinTypography.headline,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                },
-                text = {
-                    Text(
-                        text = stringResource(
-                            id = R.string.move_to_recently_deleted_confirm,
-                            pendingDeleteItems.size
-                        ) + "\n\nItems can be restored anytime from Recently Deleted.",
-                        style = OdinTypography.subheadline,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                },
-                confirmButton = {
-                    TextButton(
-                        onClick = { viewModel.confirmMoveToRecentlyDeleted() }
-                    ) {
-                        Text(
-                            text = stringResource(id = R.string.delete),
-                            style = OdinTypography.headline,
-                            color = OdinColors.DarkDestructive
-                        )
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { viewModel.dismissDeleteDialog() }) {
-                        Text(
-                            text = stringResource(id = R.string.cancel),
-                            style = OdinTypography.body,
-                            color = OdinColors.DarkAccentBlue
-                        )
-                    }
-                },
-                containerColor = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(20.dp)
             )
         }
     }

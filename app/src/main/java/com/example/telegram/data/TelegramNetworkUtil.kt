@@ -49,16 +49,16 @@ object TelegramNetworkUtil {
 
         return when (preference) {
             NetworkPreference.WIFI_ONLY -> {
-                // Must be on Wi-Fi or an unmetered connection
-                status.isWifi || status.isUnmetered
+                // Must be on Wi-Fi and reject cellular data
+                status.isWifi
             }
             NetworkPreference.MOBILE_DATA -> {
-                // Mobile data preference: must be on cellular connection, not Wi-Fi
-                status.isCellular
+                // Must be on cellular data and reject Wi-Fi
+                status.isCellular && !status.isWifi
             }
             NetworkPreference.WIFI_AND_MOBILE -> {
-                // Any active internet connection
-                status.isConnected
+                // Allows either Wi-Fi or cellular data
+                status.isWifi || status.isCellular
             }
         }
     }

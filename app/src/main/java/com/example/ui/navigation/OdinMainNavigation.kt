@@ -28,9 +28,11 @@ import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.ViewCarousel
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +64,7 @@ import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.OdinAnimations
 import com.example.ui.theme.OdinColors
 import com.example.ui.theme.OdinShapes
+import com.example.ui.theme.OdinTypography
 import com.example.ui.viewmodel.GalleryViewModel
 
 enum class MainTab {
@@ -91,6 +94,8 @@ fun OdinMainNavigation(
     val viewerMediaList by viewModel.viewerMediaList.collectAsStateWithLifecycle()
     val viewerIndex by viewModel.viewerCurrentIndex.collectAsStateWithLifecycle()
     val isSelectionMode by viewModel.isSelectionMode.collectAsStateWithLifecycle()
+    val showDeleteConfirm by viewModel.showDeleteConfirm.collectAsStateWithLifecycle()
+    val pendingDeleteItems by viewModel.pendingDeleteItems.collectAsStateWithLifecycle()
 
     BackHandler(enabled = currentDestination !is ScreenDestination.Main && !isViewerOpen) {
         currentDestination = when (currentDestination) {
@@ -238,7 +243,7 @@ fun OdinMainNavigation(
             }
         }
 
-        // Fullscreen Viewer with Smooth Expand Transition
+        // Fullscreen Viewer
         AnimatedVisibility(
             visible = isViewerOpen,
             enter = fadeIn(OdinAnimations.springNormal),
@@ -249,6 +254,52 @@ fun OdinMainNavigation(
                 mediaList = viewerMediaList,
                 initialIndex = viewerIndex,
                 onClose = { viewModel.closeViewer() }
+            )
+        }
+
+        // Global Delete Confirmation Dialog (Accessible from Photos, Albums, Search, Recently Added, Viewer)
+        if (showDeleteConfirm) {
+            AlertDialog(
+                onDismissRequest = { viewModel.dismissDeleteDialog() },
+                title = {
+                    Text(
+                        text = stringResource(id = R.string.delete),
+                        style = OdinTypography.headline,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                },
+                text = {
+                    Text(
+                        text = stringResource(
+                            id = R.string.move_to_recently_deleted_confirm,
+                            pendingDeleteItems.size
+                        ) + "\n\nItems can be restored anytime from Recently Deleted.",
+                        style = OdinTypography.subheadline,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { viewModel.confirmMoveToRecentlyDeleted() }
+                    ) {
+                        Text(
+                            text = stringResource(id = R.string.delete),
+                            style = OdinTypography.headline,
+                            color = OdinColors.DarkDestructive
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { viewModel.dismissDeleteDialog() }) {
+                        Text(
+                            text = stringResource(id = R.string.cancel),
+                            style = OdinTypography.body,
+                            color = OdinColors.DarkAccentBlue
+                        )
+                    }
+                },
+                containerColor = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(20.dp)
             )
         }
     }

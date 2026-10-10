@@ -138,6 +138,7 @@ object TelegramRestoreManager {
                 fileHash = mediaItem.cloudFileHash ?: "",
                 timestamp = mediaItem.dateModified
             ),
+            telegramDate = (mediaItem.dateModified / 1000).toInt(),
             isAlreadyLocal = false
         )
         restoreItem(context, item)

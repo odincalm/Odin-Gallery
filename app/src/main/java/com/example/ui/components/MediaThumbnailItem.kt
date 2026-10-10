@@ -67,35 +67,54 @@ fun MediaThumbnailItem(
         )
     } else null
 
-    // In normal mode: sharp edge-to-edge square.
-    // In selection mode: slight rounding for selected items.
     val tileShape = remember(isSelected) {
         if (isSelected) OdinShapes.selectionThumbnail else OdinShapes.thumbnail
     }
 
-    // High performance thumbnail request:
-    // - Specific memory & disk cache keys per item ID + dateModified
-    // - Inexact thumbnail dimensions matching the display cell
-    // - GPU hardware bitmaps (allowHardware)
-    // - Fast video keyframe extraction for video items
-    // - No crossfade animation during scroll for max FPS
-    val imageRequest = remember(item.id, item.dateModified) {
-        ImageRequest.Builder(context)
-            .data(item.uri)
-            .memoryCacheKey("thumb_${item.id}_${item.dateModified}")
-            .diskCacheKey("thumb_${item.id}_${item.dateModified}")
-            .size(280)
-            .scale(Scale.FILL)
-            .precision(Precision.INEXACT)
-            .allowHardware(true)
-            .allowRgb565(true)
-            .crossfade(false)
-            .apply {
-                if (item.isVideo) {
-                    videoFrameMillis(500)
-                }
+    // Resolve a displayable data source: never pass empty / fabricated URIs to Coil.
+    val displayData: Any? = remember(item.id, item.dateModified, item.uri, item.cloudThumbnailPath) {
+        val thumbPath = item.cloudThumbnailPath
+        if (!thumbPath.isNullOrBlank()) {
+            val f = java.io.File(thumbPath)
+            if (f.exists() && f.length() > 0) return@remember f
+        }
+        val uri = item.uri
+        when {
+            uri == android.net.Uri.EMPTY -> null
+            uri.scheme == "file" -> {
+                val path = uri.path
+                if (path != null) {
+                    val f = java.io.File(path)
+                    if (f.exists() && f.length() > 0) f else null
+                } else null
             }
-            .build()
+            uri.scheme == "content" && uri.authority == "odin.cloud.media" -> null
+            uri.scheme == "content" || uri.scheme == "android.resource" -> uri
+            else -> null
+        }
+    }
+
+    val imageRequest = remember(item.id, item.dateModified, displayData) {
+        if (displayData == null) {
+            null
+        } else {
+            ImageRequest.Builder(context)
+                .data(displayData)
+                .memoryCacheKey("thumb_${item.id}_${item.dateModified}")
+                .diskCacheKey("thumb_${item.id}_${item.dateModified}")
+                .size(280)
+                .scale(Scale.FILL)
+                .precision(Precision.INEXACT)
+                .allowHardware(true)
+                .allowRgb565(true)
+                .crossfade(false)
+                .apply {
+                    if (item.isVideo && displayData is android.net.Uri) {
+                        videoFrameMillis(500)
+                    }
+                }
+                .build()
+        }
     }
 
     Box(
@@ -116,14 +135,15 @@ fun MediaThumbnailItem(
                 contentDescription = "${if (item.isVideo) "Video" else "Photo"} ${item.displayName}"
             }
     ) {
-        AsyncImage(
-            model = imageRequest,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (imageRequest != null) {
+            AsyncImage(
+                model = imageRequest,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
 
-        // Subtle unobtrusive video duration badge (e.g. "01:24")
         if (item.isVideo && item.durationFormatted.isNotEmpty()) {
             Box(
                 modifier = Modifier
@@ -143,7 +163,6 @@ fun MediaThumbnailItem(
             }
         }
 
-        // Quiet favorite heart indicator in bottom-left
         if (item.isFavorite) {
             Icon(
                 imageVector = Icons.Default.Favorite,
@@ -156,9 +175,7 @@ fun MediaThumbnailItem(
             )
         }
 
-        // Selection mode visual feedback
         if (isSelectionMode) {
-            // Subtle blue edge highlight on selected item
             if (isSelected) {
                 Box(
                     modifier = Modifier
@@ -167,7 +184,6 @@ fun MediaThumbnailItem(
                 )
             }
 
-            // Selection circle indicator in top-right
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)

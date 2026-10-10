@@ -16,7 +16,7 @@ import com.example.telegram.data.TelegramUploader
 import com.example.telegram.model.NetworkPreference
 import com.example.telegram.model.TelegramAuthState
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -39,10 +39,10 @@ class TelegramBackupWorker(
         // 2. Ensure Telegram client is initialized and wait up to 15s for authentication readiness
         TelegramAuthManager.init(context)
         val isReady = withTimeoutOrNull(15_000L) {
-            TelegramAuthManager.authState.first { it is TelegramAuthState.Ready }
+            TelegramAuthManager.authState.firstOrNull { it is TelegramAuthState.Ready || it is TelegramAuthState.Error }
         }
 
-        if (isReady == null) {
+        if (isReady !is TelegramAuthState.Ready) {
             // Not yet logged in or temporary timeout
             return@withContext Result.retry()
         }

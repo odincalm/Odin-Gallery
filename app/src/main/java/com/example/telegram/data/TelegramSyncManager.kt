@@ -15,7 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -98,10 +98,10 @@ object TelegramSyncManager {
             try {
                 TelegramAuthManager.init(context)
                 val isReady = withTimeoutOrNull(8000L) {
-                    TelegramAuthManager.authState.first { it is TelegramAuthState.Ready }
+                    TelegramAuthManager.authState.firstOrNull { it is TelegramAuthState.Ready || it is TelegramAuthState.Error }
                 }
 
-                if (isReady == null) {
+                if (isReady !is TelegramAuthState.Ready) {
                     _isSyncing.value = false
                     onComplete?.invoke(0)
                     return@launch
@@ -213,7 +213,7 @@ object TelegramSyncManager {
             return@withContext false
         }
 
-        val existingByHash = dao.getItemByHash(metadata.fileHash)
+        val existingByHash = if (metadata.fileHash.isNotBlank()) dao.getItemByHash(metadata.fileHash) else null
         if (existingByHash != null) {
             val updated = existingByHash.copy(
                 telegramMessageId = message.id,

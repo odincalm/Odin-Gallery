@@ -112,6 +112,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -144,7 +145,7 @@ fun MediaViewerScreen(
     var isVideoCurrentlyPlaying by remember { mutableStateOf(false) }
     var is16_9Mode by remember { mutableStateOf(false) }
 
-    val currentItem = mediaList.getOrNull(pagerState.currentPage) ?: mediaList.first()
+    val currentItem = mediaList.getOrNull(pagerState.currentPage) ?: mediaList.firstOrNull() ?: return
 
     // Automatically trigger full media download when viewing a cloud-only item
     LaunchedEffect(currentItem.id, currentItem.isCloudOnly) {
@@ -491,16 +492,20 @@ private fun ImageViewerPage(
             },
             contentAlignment = Alignment.Center
         ) {
-            // Materialize cloud-only originals on demand so the viewer never loads an empty/invalid URI
             var resolvedUri by remember(item.id) { mutableStateOf(item.uri) }
             var isLoadingCloud by remember(item.id) { mutableStateOf(false) }
             var loadError by remember(item.id) { mutableStateOf<String?>(null) }
+            var retryTrigger by remember(item.id) { mutableStateOf(0) }
 
-            LaunchedEffect(item.id) {
+            LaunchedEffect(item.id, retryTrigger) {
                 val needsDownload = item.isCloudOnly &&
                     (item.uri == Uri.EMPTY || item.uri.scheme == null ||
-                        (item.uri.scheme == "file" && (item.uri.path == null || !java.io.File(item.uri.path!!).exists())))
-                if (needsDownload && item.cloudFileId != null && item.cloudFileId != 0) {
+                        (item.uri.scheme == "file" && (item.uri.path == null || !File(item.uri.path!!).exists())))
+                if (needsDownload) {
+                    if (item.cloudFileId == null || item.cloudFileId == 0) {
+                        loadError = "Cloud backup file ID missing"
+                        return@LaunchedEffect
+                    }
                     isLoadingCloud = true
                     loadError = null
                     val result = withContext(Dispatchers.IO) {
@@ -524,10 +529,35 @@ private fun ImageViewerPage(
 
             when {
                 isLoadingCloud -> {
-                    CircularProgressIndicator(color = Color.White)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(color = OdinColors.DarkAccentBlue)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Downloading photo from Telegram...",
+                            style = OdinTypography.footnote,
+                            color = Color.White
+                        )
+                    }
                 }
                 loadError != null -> {
-                    Text(text = loadError ?: "Error", color = Color.White)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(24.dp)
+                    ) {
+                        Text(
+                            text = loadError ?: "Failed to load image",
+                            style = OdinTypography.subheadline,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextButton(onClick = { retryTrigger++ }) {
+                            Text("Retry Download", color = OdinColors.DarkAccentBlue, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
                 resolvedUri != Uri.EMPTY -> {
                     val fullImageRequest = remember(resolvedUri) {
@@ -567,6 +597,41 @@ private fun VideoPlayerPage(
 ) {
     val context = LocalContext.current
 
+    var resolvedUri by remember(item.id) { mutableStateOf(item.uri) }
+    var isLoadingCloud by remember(item.id) { mutableStateOf(false) }
+    var loadError by remember(item.id) { mutableStateOf<String?>(null) }
+    var retryTrigger by remember(item.id) { mutableStateOf(0) }
+
+    LaunchedEffect(item.id, retryTrigger) {
+        val needsDownload = item.isCloudOnly &&
+            (item.uri == Uri.EMPTY || item.uri.scheme == null ||
+                (item.uri.scheme == "file" && (item.uri.path == null || !File(item.uri.path!!).exists())))
+        if (needsDownload) {
+            if (item.cloudFileId == null || item.cloudFileId == 0) {
+                loadError = "Cloud backup file ID missing"
+                return@LaunchedEffect
+            }
+            isLoadingCloud = true
+            loadError = null
+            val result = withContext(Dispatchers.IO) {
+                TelegramRestoreManager.restoreMediaItem(context, item)
+            }
+            result.fold(
+                onSuccess = { file ->
+                    if (file.exists() && file.length() > 0) {
+                        resolvedUri = Uri.fromFile(file)
+                    } else {
+                        loadError = "Downloaded video file is empty"
+                    }
+                },
+                onFailure = { e ->
+                    loadError = e.message ?: "Failed to download video from Telegram"
+                }
+            )
+            isLoadingCloud = false
+        }
+    }
+
     if (!isActive) {
         Box(
             modifier = Modifier
@@ -590,7 +655,7 @@ private fun VideoPlayerPage(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
-                        .data(item.uri)
+                        .data(if (resolvedUri != Uri.EMPTY) resolvedUri else item.cloudThumbnailPath)
                         .crossfade(true)
                         .build(),
                     contentDescription = item.displayName,
@@ -617,13 +682,52 @@ private fun VideoPlayerPage(
         return
     }
 
+    if (isLoadingCloud) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                CircularProgressIndicator(color = OdinColors.DarkAccentBlue)
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Downloading video from Telegram...",
+                    style = OdinTypography.footnote,
+                    color = Color.White
+                )
+            }
+        }
+        return
+    }
+
+    if (loadError != null) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(24.dp)
+            ) {
+                Text(
+                    text = loadError ?: "Failed to load video",
+                    style = OdinTypography.subheadline,
+                    color = Color.White
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                TextButton(onClick = { retryTrigger++ }) {
+                    Text("Retry Download", color = OdinColors.DarkAccentBlue, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        return
+    }
+
     var isPlaying by remember { mutableStateOf(true) }
     var currentPositionMs by remember { mutableLongStateOf(0L) }
     var totalDurationMs by remember { mutableLongStateOf(item.duration) }
     var playbackSpeed by remember { mutableFloatStateOf(1.0f) }
     var isMuted by remember { mutableStateOf(false) }
 
-    val exoPlayer = remember(item.uri) {
+    val exoPlayer = remember(resolvedUri) {
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
             repeatMode = Player.REPEAT_MODE_OFF
@@ -634,17 +738,19 @@ private fun VideoPlayerPage(
         onPlayingStateChanged(isPlaying)
     }
 
-    LaunchedEffect(item.uri) {
-        val savedPos = getInitialPosition(item.uri)
-        val mediaItem = ExoMediaItem.fromUri(item.uri)
-        exoPlayer.setMediaItem(mediaItem)
-        exoPlayer.prepare()
-        if (savedPos > 0) {
-            exoPlayer.seekTo(savedPos)
+    LaunchedEffect(resolvedUri) {
+        if (resolvedUri != Uri.EMPTY) {
+            val savedPos = getInitialPosition(resolvedUri)
+            val mediaItem = ExoMediaItem.fromUri(resolvedUri)
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.prepare()
+            if (savedPos > 0) {
+                exoPlayer.seekTo(savedPos)
+            }
+            exoPlayer.play()
+            isPlaying = true
+            onPlayingStateChanged(true)
         }
-        exoPlayer.play()
-        isPlaying = true
-        onPlayingStateChanged(true)
     }
 
     LaunchedEffect(exoPlayer, isPlaying) {

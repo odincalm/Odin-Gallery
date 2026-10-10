@@ -11,7 +11,10 @@ import com.example.telegram.client.TelegramSavedMessagesHelper
 import com.example.telegram.data.TelegramBackupRepository
 import com.example.telegram.data.TelegramNetworkUtil
 import com.example.telegram.model.NetworkPreference
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.runBlocking
+import org.drinkless.tdlib.TdApi
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -443,5 +446,110 @@ class TelegramBackupTest {
         val stored = dao.getItemByMessageId(555L)
         assertNotNull(stored)
         assertEquals("/tmp/thumb.jpg", stored!!.thumbnailPath)
+    }
+
+    @Test
+    fun testEmptySavedMessagesHistoryReturnsZeroItems() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val completed = dao.getCompletedItems()
+        assertTrue("Fresh device or empty history must have 0 completed items", completed.isEmpty())
+        assertEquals(0, dao.getCompletedCount())
+    }
+
+    @Test
+    fun testFreshInstallationRoomDatabaseInitialState() = runBlocking {
+        val dao = db.telegramBackupDao()
+        assertEquals(0, dao.getCompletedCount())
+        assertEquals(0, dao.getPendingItems().size)
+        assertEquals(0, dao.getFailedItems().size)
+    }
+
+    @Test
+    fun testMissingLocalFileWithAvailableRemoteBackup() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val backupRow = TelegramBackupItem(
+            localMediaId = 0L,
+            uriString = null,
+            filePath = null,
+            fileName = "remote_photo.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 102400L,
+            fileHash = "remote_hash_abc",
+            telegramMessageId = 7788L,
+            telegramFileId = 4455,
+            status = "COMPLETED",
+            completedAt = System.currentTimeMillis()
+        )
+        val rowId = dao.insert(backupRow)
+        assertTrue(rowId > 0)
+
+        val retrieved = dao.getItemByMessageId(7788L)
+        assertNotNull(retrieved)
+        assertEquals("remote_photo.jpg", retrieved!!.fileName)
+        assertNull("Missing local file must have null uriString until restored", retrieved.uriString)
+        assertEquals(4455, retrieved.telegramFileId)
+
+        // Verify synthetic cloud-only media item ID calculation
+        val cloudOnlyMediaId = -100_000L - retrieved.id
+        assertTrue("Cloud-only media items must have negative synthetic IDs", cloudOnlyMediaId < -100_000L)
+    }
+
+    @Test
+    fun testTrackFileFlowCompletionDoesNotThrowNoSuchElementException() = runBlocking {
+        // Test that kotlinx.coroutines.flow.firstOrNull on a completed flow returns null safely
+        val emptyFlow = emptyFlow<TdApi.File>()
+        val result = emptyFlow.firstOrNull { file ->
+            file.local?.isDownloadingCompleted == true
+        }
+        assertNull("firstOrNull on empty/completed flow must return null without throwing NoSuchElementException", result)
+    }
+
+    @Test
+    fun testDeletedOrUnavailableRemoteMessagesDeletionFromDao() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val item = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "remote_del.jpg",
+            mediaType = "IMAGE",
+            sizeBytes = 512L,
+            fileHash = "hash_rem_del",
+            telegramMessageId = 9999L,
+            telegramFileId = 8888,
+            status = "COMPLETED"
+        )
+        dao.insert(item)
+        assertEquals(1, dao.getCompletedCount())
+
+        // Simulate receiving UpdateDeleteMessages from TDLib
+        dao.deleteByMessageId(9999L)
+        assertEquals(0, dao.getCompletedCount())
+        assertNull(dao.getItemByMessageId(9999L))
+    }
+
+    @Test
+    fun testCloudOnlyVideoPropertiesAndResolution() = runBlocking {
+        val dao = db.telegramBackupDao()
+        val videoBackup = TelegramBackupItem(
+            localMediaId = 0L,
+            fileName = "vacation_video.mp4",
+            mediaType = "VIDEO",
+            sizeBytes = 50_000_000L,
+            fileHash = "video_hash_123",
+            telegramMessageId = 8889L,
+            telegramFileId = 4456,
+            thumbnailFileId = 4457,
+            width = 1920,
+            height = 1080,
+            duration = 150000L,
+            status = "COMPLETED"
+        )
+        dao.insert(videoBackup)
+
+        val retrieved = dao.getItemByMessageId(8889L)
+        assertNotNull(retrieved)
+        assertEquals("VIDEO", retrieved!!.mediaType)
+        assertEquals(1920, retrieved.width)
+        assertEquals(1080, retrieved.height)
+        assertEquals(150000L, retrieved.duration)
     }
 }

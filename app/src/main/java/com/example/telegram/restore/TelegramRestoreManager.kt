@@ -10,7 +10,7 @@ import com.example.telegram.client.TelegramSavedMessagesHelper
 import com.example.telegram.model.DiscoveredCloudItem
 import io.github.tdlibandroid.ktx.trackFile
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.drinkless.tdlib.TdApi
@@ -33,6 +33,10 @@ object TelegramRestoreManager {
 
     suspend fun restoreItem(context: Context, item: DiscoveredCloudItem): Result<File> = withContext(Dispatchers.IO) {
         try {
+            if (item.telegramFileId == 0) {
+                return@withContext Result.failure(IllegalStateException("Invalid Telegram file ID for ${item.metadata.fileName}"))
+            }
+
             val client = TelegramClientHolder.getClient(context)
 
             // Check if TDLib already has the file downloaded locally
@@ -53,10 +57,10 @@ object TelegramRestoreManager {
 
                 // Track download until completed with a 90-second timeout
                 val downloadedFile = withTimeoutOrNull(90_000L) {
-                    client.trackFile(item.telegramFileId).first { file ->
+                    client.trackFile(item.telegramFileId).firstOrNull { file ->
                         file.local?.isDownloadingCompleted == true && !file.local.path.isNullOrBlank()
                     }
-                } ?: return@withContext Result.failure(IllegalStateException("Download timed out for ${item.metadata.fileName}"))
+                } ?: return@withContext Result.failure(IllegalStateException("Failed to download media file from Telegram"))
 
                 downloadedFile.local?.path
                     ?: return@withContext Result.failure(IllegalStateException("Downloaded file path missing"))
